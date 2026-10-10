@@ -62,6 +62,7 @@ class UserProfile:
     week_start_day: str = "Saturday"
     weeks_ahead: int = 1
     currency: str = "EUR"
+    is_onboarded: bool = True
 
 @dataclass
 class MealSlot:

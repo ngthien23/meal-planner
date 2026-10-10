@@ -48,44 +48,19 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
         self.assertEqual(loaded.currency, "USD")
 
     def test_quick_setup_wizard_interactive_defaults(self):
-        """Quick setup wizard should create .env and profile.json with empty default preferences."""
-        # Mock inputs:
-        # 1. API key: AIzaSyTestKey123
-        # 2. Timezone: Europe/Paris
-        # 3. Currency: EUR
-        # 4. Week start day: Monday
-        # 5. Weeks ahead: 1
-        # 6. Bodyweight: 70
-        # 7. Goal state: maintenance
-        # 8. Target calories: (enter for auto)
-        # 9. Protein multiplier: (enter for default 2.0)
-        # 10. Fat multiplier: (enter for default 1.0)
-        # 11. Restrictions: (enter for none -> empty [])
-        simulated_inputs = iter([
-            "AIzaSyTestKey123",  # API Key
-            "Europe/Paris",      # Timezone
-            "EUR",               # Currency
-            "Monday",            # Week start day
-            "1",                 # Weeks ahead
-            "70",                # Bodyweight
-            "maintenance",       # Goal state
-            "",                  # Target calories (auto)
-            "",                  # Protein mult
-            "",                  # Fat mult
-            "",                  # Restrictions (empty default)
-        ])
-
+        """Quick setup wizard should only ask for API key if missing and initialize un-onboarded profile."""
         env_file = os.path.join(self.test_dir, ".env")
-        with patch("builtins.input", side_effect=lambda prompt="": next(simulated_inputs)), \
+        inputs = iter(["AIzaSyTestKey123"])
+
+        with patch("builtins.input", side_effect=lambda prompt="": next(inputs)), \
              patch("meal_planner.cli.ENV_PATH", env_file):
             profile = quick_setup_wizard(data_dir=self.test_dir, force=True)
 
         self.assertIsNotNone(profile)
-        self.assertEqual(profile.timezone, "Europe/Paris")
-        self.assertEqual(profile.currency, "EUR")
-        self.assertEqual(profile.week_start_day, "Monday")
+        self.assertFalse(profile.is_onboarded)
         self.assertEqual(profile.restrictions, [])
-        self.assertAlmostEqual(profile.target_calories, 70 * 32, delta=50)
+        self.assertEqual(profile.bodyweight_kg, 0.0)
+        self.assertEqual(profile.target_calories, 0.0)
 
         # Verify .env was written
         self.assertTrue(os.path.exists(env_file))
@@ -96,30 +71,14 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
         # Verify profile was saved to disk
         loaded = load_user_profile(self.test_dir)
         self.assertIsNotNone(loaded)
+        self.assertFalse(loaded.is_onboarded)
         self.assertEqual(loaded.restrictions, [])
 
-    def test_quick_setup_custom_restrictions(self):
-        """User can specify custom comma-separated restrictions during quick setup."""
-        simulated_inputs = iter([
-            "",               # API key skipped
-            "UTC",            # Timezone
-            "USD",            # Currency
-            "Sunday",         # Week start day
-            "1",              # Weeks ahead
-            "60",             # Bodyweight
-            "cut",            # Goal state
-            "1800",           # Explicit calories
-            "2.2",            # Protein mult
-            "0.8",            # Fat mult
-            "no peanuts, gluten free", # Restrictions
-        ])
+        # Verify no plan files were pre-generated
+        plans_dir = os.path.join(self.test_dir, "plans")
+        if os.path.exists(plans_dir):
+            self.assertEqual(os.listdir(plans_dir), [])
 
-        with patch("builtins.input", side_effect=lambda prompt="": next(simulated_inputs)):
-            profile = quick_setup_wizard(data_dir=self.test_dir, force=True)
-
-        self.assertEqual(profile.currency, "USD")
-        self.assertEqual(profile.restrictions, ["no peanuts", "gluten free"])
-        self.assertEqual(profile.target_calories, 1800.0)
 
     @patch("meal_planner.cli.subprocess.run")
     @patch("meal_planner.cli.webbrowser.open")

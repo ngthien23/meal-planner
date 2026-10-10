@@ -56,7 +56,8 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
     active_batch_csv = os.path.join(data_dir, "plans", f"{prefix}_batch_cook.csv")
     active_grocery_csv = os.path.join(data_dir, "plans", f"{prefix}_grocery_list.csv")
 
-    if profile:
+    is_onboarded = bool(profile.is_onboarded and profile.bodyweight_kg > 0 and profile.target_calories > 0) if profile else False
+    if profile and is_onboarded:
         ensure_weekly_plan_artifacts(profile, data_dir)
         profile_summary = (
             f"- Bodyweight: {profile.bodyweight_kg:.1f} kg | Goal: {profile.goal_state} | Target Calories: {profile.target_calories:.0f} kcal\n"
@@ -64,8 +65,32 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
             f"Fat {profile.fat_multiplier * profile.bodyweight_kg:.1f}g ({profile.fat_multiplier:.1f}g/kg)\n"
             f"- Week Start Day: {week_start_day} | Planning Window: Current + {weeks_ahead} week(s) ahead"
         )
+        lifecycle_instructions = f"""LIFECYCLE STATE: ACTIVE PLANNING STATE (SUBSEQUENT CHAT)
+- The athlete is fully onboarded. Their preferences and active meal plan ALREADY EXIST.
+- ATHLETE PREFERENCES:
+{profile_summary}
+- Current Weekly Meal Plan Artifact: {active_plan_csv}
+- Current Weekly Batch Cook Artifact: {active_batch_csv}
+- Current Weekly Grocery List Artifact: {active_grocery_csv}
+- DO NOT ask for onboarding preferences again.
+- Direct support: Assist the athlete immediately with their planning requests (schedule lookups, meal deviations, logging eaten meals, price updates, recipe substitutions, and grocery adjustments)."""
     else:
-        profile_summary = "- Profile not yet onboarded. Prompt user to onboard if requested."
+        profile_summary = "- Profile not yet onboarded. Prompt user to onboard and configure preferences."
+        currency_val = profile.currency if profile else "EUR"
+        lifecycle_instructions = f"""LIFECYCLE STATE: ONBOARDING STATE (FIRST CHAT)
+- You do NOT have any meal plans yet and this athlete is not yet onboarded.
+- YOUR IMMEDIATE PRIORITY IN THIS FIRST CHAT:
+  1. Warmly welcome the user to their AI Meal & Grocery Planner.
+  2. Ask the user for their core preferences needed to calculate macros and generate their zero-waste weekly meal plan:
+     - Current bodyweight in kg
+     - Fitness goal (maintenance, lean_bulk, or cut)
+     - Target daily calories (or let you calculate based on bodyweight and goal)
+     - Dietary restrictions, preferences, or allergies (if any, default none)
+     - Preferred timezone and currency (default: {user_timezone}, {currency_val})
+  3. Once the user replies with their preferences (or confirms details):
+     - Call `tool_onboard_user(...)` to persist their profile.
+     - Call `tool_generate_meal_plan()` to generate their zero-waste weekly plan, batch cook file, and split grocery list.
+     - Point the user to the newly generated plan file: {active_plan_csv}."""
 
     return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant for a powerlifting athlete.
 
@@ -78,8 +103,7 @@ CURRENT TEMPORAL & ARTIFACT CONTEXT:
 - Current Weekly Grocery List Artifact: {active_grocery_csv}
 Always interpret relative temporal expressions ("today", "tonight", "tomorrow's lunch", "Thursday dinner") using this current local clock.
 
-ATHLETE PREFERENCES:
-{profile_summary}
+{lifecycle_instructions}
 
 ATHLETE MEMORY:
 * Short-Term (Weekly):
@@ -162,7 +186,9 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         protein_multiplier: float,
         fat_multiplier: float,
         week_start_day: str = "Saturday",
-        weeks_ahead: int = 1
+        weeks_ahead: int = 1,
+        currency: str = "EUR",
+        restrictions: Optional[list[str]] = None
     ) -> str:
         """Onboards the user, stores their timezone and dietary profile, and initializes bookkeeping files."""
         # Validate calorie feasibility upfront
@@ -179,12 +205,15 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             "protein_multiplier": protein_multiplier,
             "fat_multiplier": fat_multiplier,
             "week_start_day": week_start_day,
-            "weeks_ahead": weeks_ahead
+            "weeks_ahead": weeks_ahead,
+            "currency": currency,
+            "restrictions": restrictions if restrictions is not None else [],
+            "is_onboarded": True
         })
         init_bookkeeping_artifacts(data_dir)
         PantryState.load(data_dir).save(data_dir)
         return (
-            f"Profile created successfully for {bodyweight_kg}kg ({goal_state}). "
+            f"Profile created. Profile initialized successfully for {bodyweight_kg}kg ({goal_state}). "
             f"Timezone: {profile.timezone}. Calorie target: {target_calories:.0f} kcal. "
             f"Daily targets: {bodyweight_kg * protein_multiplier:.1f}g Protein, {bodyweight_kg * fat_multiplier:.1f}g Fat. "
             f"Schedule: Week starts on {profile.week_start_day}, planning {profile.weeks_ahead} week(s) ahead."
