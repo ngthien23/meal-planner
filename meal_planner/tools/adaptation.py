@@ -8,6 +8,18 @@ from meal_planner.models import (
     UserProfile
 )
 from meal_planner.tools.macro_calculator import solve_protein_raw_weight
+from meal_planner.tools.inventory import (
+    reconcile_past_meal_deviation,
+    spread_missed_calories,
+)
+
+__all__ = [
+    "apply_meal_deviation",
+    "apply_grocery_substitution",
+    "spread_missed_calories",
+    "reconcile_past_meal_deviation",
+]
+
 
 def apply_meal_deviation(plan: WeeklyPlan, deviation: dict) -> WeeklyPlan:
     """Adapts the weekly plan when a meal deviation occurs (e.g., skipped dinner, double shake).
