@@ -107,3 +107,22 @@ class TestArtifactTools(unittest.TestCase):
         cb = next((g for g in groceries if "Chicken Breast" in g.get("Item", "") and g.get("Run") == "Saturday Run"), None)
         self.assertIsNotNone(cb)
         self.assertEqual(cb.get("Quantity_g"), "1200")
+
+    def test_get_and_update_batch_cook_csv(self):
+        # 1. Update batch cook with simplified schema
+        batch_entries = [
+            {"Dish": "Thịt Kho Tàu", "Main_Protein": "1000g Pork Belly", "Meals": 3},
+            {"Dish": "Gà Xào Sả Ớt", "Main_Protein": "800g Chicken Breast", "Meals": 2}
+        ]
+        res = update_batch_cook_csv(self.test_dir, batch_entries)
+        self.assertTrue(res["success"])
+
+        # 2. Read back
+        rows = get_batch_cook_csv(self.test_dir)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["Dish"], "Thịt Kho Tàu")
+        self.assertEqual(rows[0]["Main_Protein"], "1000g Pork Belly")
+        self.assertEqual(rows[0]["Meals"], "3")
+        self.assertNotIn("Grocery_Run", rows[0])
+        self.assertNotIn("Prep_Day", rows[0])
+        self.assertNotIn("Days_Served", rows[0])

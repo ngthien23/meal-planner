@@ -316,8 +316,21 @@ def get_batch_cook_csv(data_dir: str, prefix: Optional[str] = None) -> list[dict
     path = _resolve_plan_path(data_dir, "batch_cook.csv", prefix=prefix)
     if not os.path.exists(path):
         return []
+    rows = []
     with open(path, "r", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        for r in reader:
+            dish = str(r.get("Dish", "")).strip()
+            main_prot = str(r.get("Main_Protein") or r.get("Protein") or r.get("Ingredient") or "").strip()
+            meals = str(r.get("Meals") or r.get("Meal_Count") or r.get("Portions") or r.get("Days_Served") or "").strip()
+            if "," in meals:
+                meals = str(len([d for d in meals.split(",") if d.strip()]))
+            rows.append({
+                "Dish": dish,
+                "Main_Protein": main_prot,
+                "Meals": meals
+            })
+    return rows
 
 
 def update_batch_cook_csv(
@@ -327,16 +340,19 @@ def update_batch_cook_csv(
 ) -> dict:
     """Updates the active batch cook CSV."""
     path = _resolve_plan_path(data_dir, "batch_cook.csv", prefix=prefix)
-    fieldnames = ["Dish", "Ingredient", "Grocery_Run", "Prep_Day", "Days_Served"]
+    fieldnames = ["Dish", "Main_Protein", "Meals"]
 
     clean_rows = []
     for it in entries:
+        dish = str(it.get("Dish", "")).strip()
+        main_prot = str(it.get("Main_Protein") or it.get("Protein") or it.get("Ingredient") or "").strip()
+        meals_val = str(it.get("Meals") or it.get("Meal_Count") or it.get("Portions") or it.get("Days_Served") or "").strip()
+        if "," in meals_val:
+            meals_val = str(len([d for d in meals_val.split(",") if d.strip()]))
         clean_rows.append({
-            "Dish": str(it.get("Dish", "")).strip(),
-            "Ingredient": str(it.get("Ingredient", "")).strip(),
-            "Grocery_Run": str(it.get("Grocery_Run", "")).strip(),
-            "Prep_Day": str(it.get("Prep_Day", "")).strip(),
-            "Days_Served": str(it.get("Days_Served", "")).strip()
+            "Dish": dish,
+            "Main_Protein": main_prot,
+            "Meals": meals_val
         })
 
     target_files = [path]

@@ -128,31 +128,31 @@ class TestWeeklyTweaks(unittest.TestCase):
         self.assertTrue(os.path.exists(batch_path))
         with open(batch_path, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            expected_fields = ["Dish", "Ingredient", "Grocery_Run", "Prep_Day", "Days_Served"]
+            expected_fields = ["Dish", "Main_Protein", "Meals"]
             self.assertEqual(reader.fieldnames, expected_fields)
             rows = list(reader)
 
         self.assertGreater(len(rows), 0)
-        # Check that Thịt kho tàu is present with Sunday prep and Saturday run
+        # Check that Thịt kho tàu is present with main protein and meal count
         thit_kho_rows = [r for r in rows if "Thịt Kho" in r["Dish"]]
-        self.assertTrue(len(thit_kho_rows) > 0)
-        for r in thit_kho_rows:
-            self.assertEqual(r["Prep_Day"], "Sunday")
-            self.assertEqual(r["Grocery_Run"], "Saturday")
-            self.assertEqual(r["Days_Served"], "Monday, Tuesday, Wednesday")
-            # Ingredient contains rounded grams and ingredient name
-            self.assertTrue(any(c.isdigit() for c in r["Ingredient"]))
-            self.assertNotIn(".0g", r["Ingredient"])
+        self.assertEqual(len(thit_kho_rows), 1)
+        r = thit_kho_rows[0]
+        self.assertIn("Pork", r["Main_Protein"])
+        self.assertTrue(any(c.isdigit() for c in r["Main_Protein"]))
+        self.assertEqual(r["Meals"], "3")
+        self.assertNotIn("Grocery_Run", r)
+        self.assertNotIn("Prep_Day", r)
+        self.assertNotIn("Days_Served", r)
 
-        # Check that Gà xào sả ớt is present with Wednesday prep and Wednesday run
+        # Check that Gà xào sả ớt is present with main protein and meal count
         ga_xao_rows = [r for r in rows if "Gà Xào" in r["Dish"]]
-        self.assertTrue(len(ga_xao_rows) > 0)
-        for r in ga_xao_rows:
-            self.assertEqual(r["Prep_Day"], "Wednesday")
-            self.assertEqual(r["Grocery_Run"], "Wednesday")
-            self.assertEqual(r["Days_Served"], "Thursday, Friday")
-            self.assertTrue(any(c.isdigit() for c in r["Ingredient"]))
-            self.assertNotIn(".0g", r["Ingredient"])
+        self.assertEqual(len(ga_xao_rows), 1)
+        r2 = ga_xao_rows[0]
+        self.assertIn("Chicken Breast", r2["Main_Protein"])
+        self.assertEqual(r2["Meals"], "2")
+        self.assertNotIn("Grocery_Run", r2)
+        self.assertNotIn("Prep_Day", r2)
+        self.assertNotIn("Days_Served", r2)
 
     def test_vegetable_and_fruit_macro_tracking(self):
         plan = generate_weekly_plan(self.profile, start_date="2026-10-10")
@@ -231,10 +231,8 @@ class TestWeeklyTweaks(unittest.TestCase):
         update_res = tools_map["tool_update_batch_cook"]([
             {
                 "Dish": "Thịt Kho Tàu",
-                "Ingredient": "1000g Pork Belly; 6 Eggs",
-                "Grocery_Run": "Saturday",
-                "Prep_Day": "Sunday",
-                "Days_Served": "Monday, Tuesday, Wednesday"
+                "Main_Protein": "1000g Pork Belly",
+                "Meals": 3
             }
         ])
         self.assertIn("Successfully updated batch cook instructions", update_res)
@@ -242,4 +240,7 @@ class TestWeeklyTweaks(unittest.TestCase):
         # View batch cook list
         batch_summary = tools_map["tool_get_batch_cook"]()
         self.assertIn("Thịt Kho Tàu", batch_summary)
-        self.assertIn("Sunday", batch_summary)
+        self.assertIn("1000g Pork Belly", batch_summary)
+        self.assertIn("3", batch_summary)
+        self.assertNotIn("Sunday", batch_summary)
+        self.assertNotIn("Prep Day", batch_summary)

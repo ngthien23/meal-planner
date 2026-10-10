@@ -163,8 +163,16 @@ CORE ATHLETE RULES & PLANNING PRINCIPLES:
 6. RETROSPECTIVE MEAL UPDATES & MEMORY DEVIATIONS:
    - If the user reports skipping a meal or eating out: record a dated note in Short-Term Memory via `tool_save_memory_note(note, tier='weekly')` (e.g. "- [YYYY-MM-DD] Skipped Lunch; 250g chicken thighs remain in stock"). Eating out never deducts home stock.
    - If there is a missed calorie/protein deficit: advise an immediate evening snack/shake, or note the carry-over into next week's Short-Term Memory (capped at comfortable digestive limits, +150 to +200 kcal/day and +15g protein/day), and update `{active_plan_csv}` with `tool_update_meal_plan`.
-7. Dietary Bans: Fortified soy milk only (no dairy), ON Whey only, canned tuna only.
-8. Raw Weights: All recipes dictate raw/dry ingredient weights.
+7. BATCH COOK PLANNING:
+   - When planning dishes to be batch-cooked (e.g. for multiple lunches or batch dinners):
+     * Persist the plan to `{active_batch_csv}` via `tool_update_batch_cook(dishes)`.
+     * Specify:
+       1. `Dish`: What dish is to be batch-cooked (just the name, no dish weight required, e.g. "Thịt Kho Tàu", "Gà Xào Sả Ớt").
+       2. `Main_Protein`: What is the main protein and how much in grams or kg (e.g. "1000g Pork Belly", "1kg Chicken Thighs"). This is the ONLY ingredient to list.
+       3. `Meals`: How many meals this batch covers (e.g. 3).
+     * Ditch legacy columns: do not include grocery run dates, prep days, or non-protein ingredients in the batch cook artifact.
+8. Dietary Bans: Fortified soy milk only (no dairy), ON Whey only, canned tuna only.
+9. Raw Weights: All recipes dictate raw/dry ingredient weights.
 """
 
 def get_agent_tools(data_dir: str = "data") -> list[Callable]:
@@ -269,17 +277,25 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         return res.get("message", "Grocery list updated.")
 
     def tool_get_batch_cook() -> str:
-        """Reads the active batch cook CSV."""
+        """Reads the active batch cook CSV artifact."""
         rows = get_batch_cook_csv(data_dir)
         if not rows:
             return "No batch cook instructions found."
-        lines = ["| Dish | Ingredient | Grocery Run | Prep Day | Days Served |", "|---|---|---|---|---|"]
+        lines = ["| Dish | Main Protein | Meals |", "|---|---|---|"]
         for r in rows:
-            lines.append(f"| {r.get('Dish')} | {r.get('Ingredient')} | {r.get('Grocery_Run')} | {r.get('Prep_Day')} | {r.get('Days_Served')} |")
+            lines.append(f"| {r.get('Dish')} | {r.get('Main_Protein')} | {r.get('Meals')} |")
         return "\n".join(lines)
 
     def tool_update_batch_cook(dishes: list[dict]) -> str:
-        """Updates the active batch cook CSV."""
+        """Updates the active batch cook CSV artifact.
+        
+        Args:
+            dishes: List of batch-cooked dish dicts:
+                    [{'Dish': 'Thịt Kho Tàu', 'Main_Protein': '1000g Pork Belly', 'Meals': 3}]
+                    - 'Dish': The dish name (just the name, no dish weight required).
+                    - 'Main_Protein': The main protein and amount in grams or kg (e.g. '1000g Pork Belly', '1kg Chicken Thighs'). This is the ONLY ingredient to list.
+                    - 'Meals': How many meals this batch cook covers (e.g. 3).
+        """
         res = update_batch_cook_csv(data_dir, dishes)
         return res.get("message", "Batch cook instructions updated.")
 

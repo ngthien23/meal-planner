@@ -193,10 +193,10 @@ def export_meal_plan_csv(plan: WeeklyPlan, filepath: str) -> None:
                 })
 
 def export_batch_cook_csv(plan: WeeklyPlan, filepath: str) -> None:
-    """Exports a dedicated CSV showing batch-cooked dishes for the week and their grocery requirements."""
+    """Exports a dedicated CSV showing batch-cooked dishes for the week, main protein amount, and meal count."""
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     fieldnames = [
-        "Dish", "Ingredient", "Grocery_Run", "Prep_Day", "Days_Served"
+        "Dish", "Main_Protein", "Meals"
     ]
 
     # Collect batch-cooked slots from the weekly plan
@@ -206,17 +206,11 @@ def export_batch_cook_csv(plan: WeeklyPlan, filepath: str) -> None:
             if slot.prep_type == "batch_reheatable":
                 recipe_name = slot.recipe_name
                 if recipe_name not in batch_dishes:
-                    prep_day = "Sunday" if "Thịt Kho" in recipe_name or "Pork" in recipe_name else "Wednesday"
-                    grocery_run = "Saturday" if prep_day == "Sunday" else "Wednesday"
                     batch_dishes[recipe_name] = {
                         "dish": recipe_name,
-                        "prep_day": prep_day,
-                        "days_served": [],
                         "portions": 0,
-                        "grocery_run": grocery_run,
                         "ingredients": {}
                     }
-                batch_dishes[recipe_name]["days_served"].append(day.day_name)
                 batch_dishes[recipe_name]["portions"] += 1
                 for item in slot.ingredients:
                     ing_name = item["name"]
@@ -225,18 +219,29 @@ def export_batch_cook_csv(plan: WeeklyPlan, filepath: str) -> None:
                         batch_dishes[recipe_name]["ingredients"].get(ing_name, 0.0) + w
                     )
 
+    protein_keywords = [
+        "pork belly", "chicken breast", "chicken thigh", "beef", "shrimp",
+        "fish", "salmon", "tofu", "tuna", "pork", "chicken", "turkey", "egg"
+    ]
     rows = []
     for dish_info in batch_dishes.values():
-        days_str = ", ".join(dish_info["days_served"])
+        best_match = None
+        best_weight = 0.0
         for ing_name, tot_w in dish_info["ingredients"].items():
-            ingredient_str = f"{int(round(tot_w))}g {ing_name}"
-            rows.append({
-                "Dish": dish_info["dish"],
-                "Ingredient": ingredient_str,
-                "Grocery_Run": dish_info["grocery_run"],
-                "Prep_Day": dish_info["prep_day"],
-                "Days_Served": days_str
-            })
+            lower_name = ing_name.lower()
+            is_prot = any(kw in lower_name for kw in protein_keywords)
+            if is_prot and tot_w > best_weight:
+                best_match = ing_name
+                best_weight = tot_w
+        if not best_match and dish_info["ingredients"]:
+            best_match, best_weight = max(dish_info["ingredients"].items(), key=lambda x: x[1])
+
+        main_protein_str = f"{int(round(best_weight))}g {best_match}" if best_match else ""
+        rows.append({
+            "Dish": dish_info["dish"],
+            "Main_Protein": main_protein_str,
+            "Meals": str(dish_info["portions"])
+        })
 
     with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
