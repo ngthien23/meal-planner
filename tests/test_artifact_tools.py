@@ -79,6 +79,8 @@ class TestArtifactTools(unittest.TestCase):
         # 1. Read initial grocery list
         groceries = get_grocery_list_csv(self.test_dir)
         self.assertGreater(len(groceries), 0)
+        chicken_item = next(g for g in groceries if "Chicken Breast" in g["Item"])
+        self.assertGreater(int(chicken_item["Quantity_g"]), 100)
 
         # 2. Shift next run to dynamic date (e.g. 2026-10-13) and prune redundant meat
         new_runs = [

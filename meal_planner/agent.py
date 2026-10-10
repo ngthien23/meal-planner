@@ -258,9 +258,13 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             return "No grocery list found."
         lines = ["| Run | Category | Item | Quantity (g) | Est. Price (€) |", "|---|---|---|---|---|"]
         for r in rows:
-            qty_val = r.get("Quantity_g") or r.get("Quantity") or "0"
-            price_val = str(r.get("Estimated_Price_EUR", "0.00")).replace("€", "").strip()
-            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {qty_val}g | €{price_val} |")
+            qty_val = str(r.get("Quantity_g") or r.get("Quantity") or "0").rstrip("g").strip()
+            price_val = str(r.get("Estimated_Price_EUR", "0.00")).replace("€", "").replace("$", "").replace("£", "").strip()
+            try:
+                price_str = f"{float(price_val):.2f}"
+            except ValueError:
+                price_str = price_val
+            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {qty_val}g | €{price_str} |")
         return "\n".join(lines)
 
     def tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str:

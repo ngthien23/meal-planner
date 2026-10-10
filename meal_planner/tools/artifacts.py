@@ -187,6 +187,30 @@ def update_meal_plan_csv(
     }
 
 
+def _parse_qty_g(val: any) -> int:
+    """Safely extracts integer gram weight from numeric or formatted quantity strings like '1x (450g planned)', '500g', etc."""
+    if val is None:
+        return 0
+    if isinstance(val, (int, float)):
+        return max(0, int(round(val)))
+    s = str(val).strip()
+    if not s:
+        return 0
+    # First look for planned grams in parentheses e.g. "(348g planned)" or "(348g"
+    m = re.search(r"\((\d+(?:\.\d+)?)\s*g", s)
+    if m:
+        return max(0, int(round(float(m.group(1)))))
+    # Next look for grams suffix e.g. "500g" or "500 g"
+    m = re.search(r"(\d+(?:\.\d+)?)\s*g", s)
+    if m:
+        return max(0, int(round(float(m.group(1)))))
+    # Fallback to general integer or float
+    m = re.search(r"(\d+(?:\.\d+)?)", s)
+    if m:
+        return max(0, int(round(float(m.group(1)))))
+    return 0
+
+
 def get_grocery_list_csv(
     data_dir: str,
     prefix: Optional[str] = None
@@ -199,10 +223,11 @@ def get_grocery_list_csv(
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for r in reader:
-            if "Quantity_g" not in r or not r.get("Quantity_g"):
+            if "Quantity_g" in r and r.get("Quantity_g"):
+                r["Quantity_g"] = str(_parse_qty_g(r["Quantity_g"]))
+            else:
                 raw_q = r.get("Quantity", "")
-                m = re.search(r"(\d+(?:\.\d+)?)", raw_q)
-                r["Quantity_g"] = str(int(round(float(m.group(1))))) if m else "0"
+                r["Quantity_g"] = str(_parse_qty_g(raw_q))
             rows.append(r)
     return rows
 
@@ -228,16 +253,21 @@ def update_grocery_list_csv(
     if mode == "replace":
         clean_rows = []
         for it in entries:
-            qty = int(round(float(it.get("Quantity_g", 0) or 0)))
+            raw_qty = it.get("Quantity_g") if "Quantity_g" in it else it.get("Quantity", 0)
+            qty = _parse_qty_g(raw_qty)
             if qty <= 0:
                 continue
-            price_raw = str(it.get("Estimated_Price_EUR", 0.0)).replace("€", "").strip()
+            price_raw = str(it.get("Estimated_Price_EUR", 0.0) or it.get("Price", 0.0) or 0.0).replace("€", "").replace("$", "").replace("£", "").strip()
+            try:
+                price = float(price_raw or 0.0)
+            except ValueError:
+                price = 0.0
             clean_rows.append({
                 "Run": str(it.get("Run", "")).strip(),
                 "Category": str(it.get("Category", "other")).strip().lower(),
                 "Item": str(it.get("Item", "")).strip(),
                 "Quantity_g": str(qty),
-                "Estimated_Price_EUR": f"{float(price_raw or 0.0):.2f}"
+                "Estimated_Price_EUR": f"{price:.2f}"
             })
     else:
         existing = []
@@ -245,33 +275,41 @@ def update_grocery_list_csv(
             with open(path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for r in reader:
-                    if "Quantity_g" not in r or not r.get("Quantity_g"):
-                        raw_q = r.get("Quantity", "")
-                        m = re.search(r"(\d+(?:\.\d+)?)", raw_q)
-                        q_val = str(int(round(float(m.group(1))))) if m else "0"
-                    else:
-                        q_val = str(int(round(float(r.get("Quantity_g", 0) or 0))))
-                    price_raw = str(r.get("Estimated_Price_EUR", 0.0)).replace("€", "").strip()
+                    raw_q = r.get("Quantity_g") or r.get("Quantity", "")
+                    q_val = str(_parse_qty_g(raw_q))
+                    price_raw = str(r.get("Estimated_Price_EUR", 0.0)).replace("€", "").replace("$", "").replace("£", "").strip()
+                    try:
+                        price = float(price_raw or 0.0)
+                    except ValueError:
+                        price = 0.0
                     existing.append({
                         "Run": str(r.get("Run", "")).strip(),
                         "Category": str(r.get("Category", "other")).strip().lower(),
                         "Item": str(r.get("Item", "")).strip(),
                         "Quantity_g": q_val,
-                        "Estimated_Price_EUR": f"{float(price_raw or 0.0):.2f}"
+                        "Estimated_Price_EUR": f"{price:.2f}"
                     })
         
-        lookup = {(r["Run"], r["Item"].lower()): i for i, r in enumerate(existing)}
+        lookup = {(r["Run"].lower().strip(), r["Item"].lower().strip()): i for i, r in enumerate(existing)}
         for it in entries:
             r_run = str(it.get("Run", "")).strip()
             r_item = str(it.get("Item", "")).strip()
-            key = (r_run, r_item.lower())
-            qty = int(round(float(it.get("Quantity_g", 0) or 0)))
-            price_raw = str(it.get("Estimated_Price_EUR", 0.0)).replace("€", "").strip()
-            price = float(price_raw or 0.0)
+            key = (r_run.lower().strip(), r_item.lower().strip())
+            raw_qty = it.get("Quantity_g") if "Quantity_g" in it else it.get("Quantity", 0)
+            qty = _parse_qty_g(raw_qty)
+            price_raw = str(it.get("Estimated_Price_EUR", 0.0) or it.get("Price", 0.0) or 0.0).replace("€", "").replace("$", "").replace("£", "").strip()
+            try:
+                price = float(price_raw or 0.0)
+            except ValueError:
+                price = 0.0
             cat = str(it.get("Category", "other")).strip().lower()
 
             if qty <= 0:
-                if key in lookup:
+                if not r_run:
+                    for idx, r in enumerate(existing):
+                        if r and r["Item"].lower().strip() == r_item.lower().strip():
+                            existing[idx] = None
+                elif key in lookup:
                     idx = lookup[key]
                     existing[idx] = None
                 continue

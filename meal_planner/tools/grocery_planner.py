@@ -146,7 +146,7 @@ def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str, curre
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     symbol = get_currency_symbol(currency)
     fieldnames = [
-        "Run", "Category", "Item", "Quantity", "Package_Size", "Estimated_Price_EUR", "Storage_Note"
+        "Run", "Category", "Item", "Quantity_g", "Quantity", "Package_Size", "Estimated_Price_EUR", "Storage_Note"
     ]
     with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -159,6 +159,7 @@ def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str, curre
                     "Run": item["run"],
                     "Category": item["category"].capitalize(),
                     "Item": item["name"],
+                    "Quantity_g": str(needed_g_val),
                     "Quantity": f"{item['packages']}x ({needed_g_val}g planned)",
                     "Package_Size": item["package_size"],
                     "Estimated_Price_EUR": f"{symbol}{item['estimated_price_eur']:.2f}",
