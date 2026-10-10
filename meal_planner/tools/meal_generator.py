@@ -76,7 +76,8 @@ def _build_meal_slot(
         protein_g=round(total_p, 1),
         fat_g=round(total_f, 1),
         carbs_g=round(total_c, 1),
-        calories=round(total_kcal, 1)
+        calories=round(total_kcal, 1),
+        prep_type=recipe.prep_type
     )
 
 def generate_weekly_plan(
@@ -158,14 +159,13 @@ def export_meal_plan_csv(plan: WeeklyPlan, filepath: str) -> None:
         for day in plan.days:
             for slot in [day.breakfast, day.lunch, day.dinner]:
                 ingredients_str = "; ".join(item.get("label", f"{item['raw_weight_g']}g {item['name']}") for item in slot.ingredients)
-                prep_type = "batch_reheatable" if "batch" in slot.recipe_id else "fresh_quick"
                 writer.writerow({
                     "Day": day.day_name,
                     "Date": day.date_str,
                     "Meal": slot.meal_type.capitalize(),
                     "Recipe": slot.recipe_name,
                     "Texture": slot.texture,
-                    "Prep_Type": prep_type,
+                    "Prep_Type": slot.prep_type,
                     "Ingredients": ingredients_str,
                     "Protein_g": slot.protein_g,
                     "Fat_g": slot.fat_g,

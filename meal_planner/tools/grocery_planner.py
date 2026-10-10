@@ -66,12 +66,18 @@ def generate_split_groceries(
                 if is_pantry:
                     continue  # pantry handled via restock check
 
+                # Frozen seafood/meat (e.g. frozen shrimp) is non-perishable in freezer (doesn't spoil in 72h).
+                # Allocate full weekly amount to Saturday Run to prevent splitting a single package into two rounded purchases.
+                if ing and ing.category == "seafood" and "frozen" in ing.id:
+                    sat_usage[ing_id] = sat_usage.get(ing_id, 0.0) + weight
+                    continue
+
                 # Perishable assignment based on 48-72h food safety constraint:
                 # Sat (0) and Sun (1) meals -> Saturday Run
-                # Mon-Wed lunches prepped Sunday evening -> Saturday Run
+                # Mon-Wed lunches prepped Sunday evening (i=2,3,4 lunch) -> Saturday Run
                 # Mon-Tue fresh dinner meats -> Saturday Run
-                # Wed-Fri fresh dinner meats & Wed batch lunch -> Wednesday Run
-                if i < 4 and not (i == 4 and slot.meal_type == "dinner"):
+                # Wed dinner & Thu-Fri fresh dinner meats & Wed batch lunch (Thu-Fri) -> Wednesday Run
+                if i < 4 or (i == 4 and slot.meal_type == "lunch"):
                     sat_usage[ing_id] = sat_usage.get(ing_id, 0.0) + weight
                 else:
                     wed_usage[ing_id] = wed_usage.get(ing_id, 0.0) + weight
@@ -102,12 +108,12 @@ def generate_split_groceries(
     saturday_items = _build_run_items(sat_usage, "Saturday Run")
     wednesday_items = _build_run_items(wed_usage, "Wednesday Run")
 
-    # Pantry restock check
+    # Pantry restock check across ALL non-perishable catalog pantry items
     restock_items = []
-    for ing_id, planned_g in total_weekly_usage.items():
-        ing = ingredients_catalog.get(ing_id)
-        if not ing or ing.perishable:
+    for ing_id, ing in ingredients_catalog.items():
+        if ing.perishable or ing.category not in ["pantry", "supplement", "grains", "dairy_alternative"]:
             continue
+        planned_g = total_weekly_usage.get(ing_id, 0.0)
         current_stock = pantry.items.get(ing_id, 0.0)
         remaining_stock = current_stock - planned_g
         threshold = ing.reorder_threshold_g

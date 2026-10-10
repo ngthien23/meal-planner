@@ -100,7 +100,7 @@ def apply_grocery_substitution(
     sub_id: str,
     new_price_eur: float
 ) -> WeeklyPlan:
-    """Substitutes an ingredient across the weekly plan and recalculates raw weights."""
+    """Substitutes an ingredient across the weekly plan and recalculates raw weights and macros."""
     ingredients_catalog, _ = load_catalog()
     sub_ing = ingredients_catalog.get(sub_id)
     if not sub_ing:
@@ -108,17 +108,24 @@ def apply_grocery_substitution(
 
     updated_plan = copy.deepcopy(plan)
     for day in updated_plan.days:
+        day_changed = False
         for slot in [day.breakfast, day.lunch, day.dinner]:
             has_orig = any(item["id"] == original_id for item in slot.ingredients)
             if not has_orig:
                 continue
 
+            day_changed = True
+            # Compute baseline protein from other ingredients
+            baseline_p = sum(
+                (item["raw_weight_g"] / 100.0) * ingredients_catalog[item["id"]].protein_per_100g
+                for item in slot.ingredients
+                if item["id"] != original_id and item["id"] in ingredients_catalog
+            )
+            recalculated_weight = solve_protein_raw_weight(slot.protein_g, baseline_p, sub_ing.protein_per_100g)
+
             new_ingredients = []
             for item in slot.ingredients:
                 if item["id"] == original_id:
-                    # Recalculate raw weight based on substituted ingredient density
-                    target_p = slot.protein_g
-                    recalculated_weight = solve_protein_raw_weight(target_p, 0.0, sub_ing.protein_per_100g)
                     new_ingredients.append({
                         "id": sub_id,
                         "name": sub_ing.name,
@@ -129,10 +136,36 @@ def apply_grocery_substitution(
                     new_ingredients.append(item)
 
             slot.ingredients = new_ingredients
+
             # Update recipe name
             if "pork" in original_id and "chicken" in sub_id:
                 slot.recipe_name = slot.recipe_name.replace("Pork", "Chicken").replace("Thịt Kho", "Gà Kho")
             elif "chicken" in original_id and "pork" in sub_id:
                 slot.recipe_name = slot.recipe_name.replace("Chicken", "Pork")
+
+            # Recompute slot macros from all ingredients
+            tot_p = 0.0
+            tot_f = 0.0
+            tot_c = 0.0
+            tot_kcal = 0.0
+            for item in slot.ingredients:
+                ing = ingredients_catalog.get(item["id"])
+                if ing:
+                    w = item["raw_weight_g"]
+                    tot_p += (w / 100.0) * ing.protein_per_100g
+                    tot_f += (w / 100.0) * ing.fat_per_100g
+                    tot_c += (w / 100.0) * ing.carbs_per_100g
+                    tot_kcal += (w / 100.0) * ing.calories_per_100g
+
+            slot.protein_g = round(tot_p, 1)
+            slot.fat_g = round(tot_f, 1)
+            slot.carbs_g = round(tot_c, 1)
+            slot.calories = round(tot_kcal, 1)
+
+        if day_changed:
+            day.total_protein_g = round(day.breakfast.protein_g + day.lunch.protein_g + day.dinner.protein_g, 1)
+            day.total_fat_g = round(day.breakfast.fat_g + day.lunch.fat_g + day.dinner.fat_g, 1)
+            day.total_carbs_g = round(day.breakfast.carbs_g + day.lunch.carbs_g + day.dinner.carbs_g, 1)
+            day.total_calories = round(day.breakfast.calories + day.lunch.calories + day.dinner.calories, 1)
 
     return updated_plan

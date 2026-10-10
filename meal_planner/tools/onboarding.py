@@ -26,7 +26,14 @@ def resolve_timezone(tz_input: str) -> zoneinfo.ZoneInfo:
         "UTC+7": "Asia/Ho_Chi_Minh",
         "ICT": "Asia/Ho_Chi_Minh",
     }
-    target = aliases.get(cleaned.upper(), cleaned)
+    # Normalize case for common zones like 'europe/brussels' -> 'Europe/Brussels'
+    parts = cleaned.split("/")
+    if len(parts) == 2:
+        normalized_target = f"{parts[0].capitalize()}/{parts[1].capitalize()}"
+    else:
+        normalized_target = cleaned
+
+    target = aliases.get(cleaned.upper(), normalized_target)
     try:
         return zoneinfo.ZoneInfo(target)
     except Exception:
@@ -42,13 +49,15 @@ def get_relative_datetime(
     now = reference_dt if reference_dt is not None else datetime.now(tz)
     expr = relative_expr.lower().strip()
 
-    # Determine meal type
-    if any(k in expr for k in ["breakfast", "morning", "shake"]):
-        meal_type = "breakfast"
+    # Determine meal type: prioritize explicit time-of-day / meal slots first
+    if any(k in expr for k in ["dinner", "tonight", "night", "evening"]):
+        meal_type = "dinner"
     elif any(k in expr for k in ["lunch", "noon"]):
         meal_type = "lunch"
-    elif any(k in expr for k in ["dinner", "tonight", "night", "evening"]):
-        meal_type = "dinner"
+    elif any(k in expr for k in ["breakfast", "morning"]):
+        meal_type = "breakfast"
+    elif "shake" in expr:
+        meal_type = "breakfast"
     else:
         meal_type = "dinner"
 

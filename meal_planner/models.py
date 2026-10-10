@@ -60,6 +60,7 @@ class MealSlot:
     fat_g: float
     carbs_g: float
     calories: float
+    prep_type: str = "fresh_quick"
 
 @dataclass
 class DayPlan:

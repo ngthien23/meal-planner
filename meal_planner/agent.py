@@ -86,6 +86,12 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         fat_multiplier: float
     ) -> str:
         """Onboards the user, stores their timezone and dietary profile, and initializes bookkeeping files."""
+        # Validate calorie feasibility upfront
+        try:
+            calculate_daily_targets(bodyweight_kg, protein_multiplier, fat_multiplier, target_calories)
+        except ValueError as e:
+            return f"Error: Infeasible nutritional targets. {e}"
+
         profile = init_user_profile(data_dir, {
             "timezone": timezone,
             "bodyweight_kg": bodyweight_kg,
