@@ -1,10 +1,16 @@
 import os
 import sys
+import threading
+import webbrowser
+import subprocess
 from datetime import datetime
 from meal_planner.agent import get_agent_tools, build_system_instruction
+from meal_planner.models import UserProfile
 from meal_planner.tools.onboarding import load_user_profile, init_user_profile, resolve_timezone
 from meal_planner.tools.memory import MemoryManager
 from meal_planner.tools.meal_generator import ensure_weekly_plan_artifacts, get_current_cycle_prefix
+
+ENV_PATH = ".env"
 
 try:
     from dotenv import load_dotenv
@@ -16,8 +22,22 @@ def get_model_name() -> str:
     """Returns the Gemini model to use, defaulting to gemini-3.8-flash."""
     return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
-def ensure_api_key(input_fn=input) -> str:
+def _open_browser_delayed(url: str, delay: float = 1.5) -> None:
+    """Opens the default web browser after a brief delay so the server can bind."""
+    def _open():
+        import time
+        time.sleep(delay)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+    t = threading.Thread(target=_open, daemon=True)
+    t.start()
+
+def ensure_api_key(input_fn=None) -> str:
     """Checks for GEMINI_API_KEY or GOOGLE_API_KEY, prompts the user if missing, and optionally persists to .env."""
+    if input_fn is None:
+        input_fn = input
     key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
     if key:
         os.environ["GEMINI_API_KEY"] = key
@@ -40,7 +60,7 @@ def ensure_api_key(input_fn=input) -> str:
     try:
         save = input_fn("Save this key to .env for future sessions? (y/N): ").strip().lower()
         if save in ["y", "yes"]:
-            env_path = ".env"
+            env_path = getattr(sys.modules[__name__], "ENV_PATH", ".env")
             with open(env_path, "a", encoding="utf-8") as f:
                 f.write(f"\nGEMINI_API_KEY={entered}\nGOOGLE_API_KEY={entered}\n")
             print("[OK] GEMINI_API_KEY and GOOGLE_API_KEY saved to .env file.")
@@ -48,6 +68,153 @@ def ensure_api_key(input_fn=input) -> str:
         pass
 
     return entered
+
+def quick_setup_wizard(
+    data_dir: str = "data",
+    input_fn=None,
+    force: bool = False
+) -> UserProfile:
+    """Interactive quick setup wizard for configuring API key, preferences, timezone, currency, etc.
+    
+    Default preferences (restrictions) are empty so new users start with a clean slate.
+    """
+    if input_fn is None:
+        input_fn = input
+    profile = load_user_profile(data_dir)
+    if profile is not None and not force:
+        return profile
+
+    print("\n" + "=" * 70)
+    print("  === AI Meal & Grocery Planner Agent - Quick Setup Wizard ===")
+    print("=" * 70)
+    print("Welcome! Let's get your personalized meal planning system configured.")
+    print("This setup initializes your API key, regional preferences, and baseline nutrition.")
+
+    # 1. API key setup
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not api_key:
+        print("\n--- 1. Gemini API Key ---")
+        print("A free Gemini API key is needed for multimodal AI chat, reading grocery bills, and meal adjustments.")
+        print("You can get a free key at: https://aistudio.google.com/app/apikey")
+        try:
+            entered_key = input_fn("Enter your Gemini API key (or press Enter to run offline): ").strip()
+            if entered_key:
+                os.environ["GEMINI_API_KEY"] = entered_key
+                os.environ["GOOGLE_API_KEY"] = entered_key
+                env_file = getattr(sys.modules[__name__], "ENV_PATH", ".env")
+                with open(env_file, "a" if os.path.exists(env_file) else "w", encoding="utf-8") as f:
+                    f.write(f"\nGEMINI_API_KEY={entered_key}\nGOOGLE_API_KEY={entered_key}\n")
+                print("[OK] Saved API key to .env file.")
+        except (KeyboardInterrupt, EOFError):
+            pass
+
+    # 2. Regional & Preferences: Timezone & Currency
+    print("\n--- 2. Regional Preferences ---")
+    default_tz = "UTC"
+    try:
+        local_tz = datetime.now().astimezone().tzinfo
+        if hasattr(local_tz, "key") and local_tz.key:
+            default_tz = local_tz.key
+    except Exception:
+        pass
+
+    tz_prompt = f"Enter your timezone (e.g. Europe/Brussels, America/New_York, UTC, Asia/Ho_Chi_Minh) [{default_tz}]: "
+    try:
+        tz_in = input_fn(tz_prompt).strip()
+    except (KeyboardInterrupt, EOFError):
+        tz_in = ""
+    tz_name = tz_in if tz_in else default_tz
+
+    try:
+        curr_in = input_fn("Enter your preferred currency code (EUR, USD, GBP, VND, CAD, AUD, JPY) [EUR]: ").strip().upper()
+    except (KeyboardInterrupt, EOFError):
+        curr_in = ""
+    currency = curr_in if curr_in else "EUR"
+
+    try:
+        start_day_in = input_fn("Enter day that starts your weekly meal plan cycle (e.g. Monday, Saturday, Sunday) [Monday]: ").strip().capitalize()
+    except (KeyboardInterrupt, EOFError):
+        start_day_in = ""
+    week_start_day = start_day_in if start_day_in else "Monday"
+
+    try:
+        weeks_in = input_fn("Enter number of weeks ahead to plan (retention window) [1]: ").strip()
+        weeks_ahead = int(weeks_in) if weeks_in else 1
+    except (KeyboardInterrupt, EOFError, ValueError):
+        weeks_ahead = 1
+
+    # 3. Bodyweight & Goal
+    print("\n--- 3. Bodyweight & Fitness Goals ---")
+    try:
+        bw_in = input_fn("Enter your current bodyweight in kg [70]: ").strip()
+        bw = float(bw_in) if bw_in else 70.0
+    except (KeyboardInterrupt, EOFError, ValueError):
+        bw = 70.0
+
+    try:
+        goal_in = input_fn("Enter your fitness goal (maintenance / lean_bulk / cut) [maintenance]: ").strip().lower()
+        goal = goal_in if goal_in in ["maintenance", "lean_bulk", "cut"] else "maintenance"
+    except (KeyboardInterrupt, EOFError):
+        goal = "maintenance"
+
+    # Auto estimate calories based on goal and weight
+    if goal == "lean_bulk":
+        est_kcal = round(bw * 37)
+    elif goal == "cut":
+        est_kcal = round(bw * 27)
+    else:
+        est_kcal = round(bw * 32)
+
+    try:
+        cal_in = input_fn(f"Enter target daily calories (press Enter for auto-calculation) [{est_kcal}]: ").strip()
+        target_kcal = float(cal_in) if cal_in else float(est_kcal)
+    except (KeyboardInterrupt, EOFError, ValueError):
+        target_kcal = float(est_kcal)
+
+    try:
+        prot_in = input_fn("Enter protein multiplier in g/kg [2.0]: ").strip()
+        p_mult = float(prot_in) if prot_in else 2.0
+    except (KeyboardInterrupt, EOFError, ValueError):
+        p_mult = 2.0
+
+    try:
+        fat_in = input_fn("Enter fat multiplier in g/kg [1.0]: ").strip()
+        f_mult = float(fat_in) if fat_in else 1.0
+    except (KeyboardInterrupt, EOFError, ValueError):
+        f_mult = 1.0
+
+    # 4. Dietary Restrictions (Default EMPTY)
+    print("\n--- 4. Dietary Restrictions & Allergies ---")
+    try:
+        restr_in = input_fn("Enter dietary restrictions separated by commas (press Enter for NONE) []: ").strip()
+        if restr_in:
+            restrictions = [r.strip() for r in restr_in.split(",") if r.strip()]
+        else:
+            restrictions = []
+    except (KeyboardInterrupt, EOFError):
+        restrictions = []
+
+    profile_data = {
+        "timezone": tz_name,
+        "bodyweight_kg": bw,
+        "goal_state": goal,
+        "target_calories": target_kcal,
+        "protein_multiplier": p_mult,
+        "fat_multiplier": f_mult,
+        "restrictions": restrictions,
+        "week_start_day": week_start_day,
+        "weeks_ahead": weeks_ahead,
+        "currency": currency,
+        "texture_rules": {
+            "breakfast": "soft_or_liquid",
+            "lunch": "solid_batch",
+            "dinner": "broth_or_soft"
+        }
+    }
+    profile = init_user_profile(data_dir, profile_data)
+    ensure_weekly_plan_artifacts(profile, data_dir)
+    print("\n[OK] Setup complete! Clean profile and weekly meal plan generated.")
+    return profile
 
 def run_interactive_cli(data_dir: str = "data") -> None:
     """Runs the interactive Meal Planner agent terminal session."""
@@ -61,37 +228,9 @@ def run_interactive_cli(data_dir: str = "data") -> None:
     tools_map = {t.__name__: t for t in tools}
 
     if not profile:
-        print("\n[Welcome] No athlete profile found. Let's do a quick onboarding setup.")
-        try:
-            tz_input = input("Enter your timezone (e.g. Europe/Brussels, UTC+2, America/New_York) [Europe/Brussels]: ").strip()
-            tz_name = tz_input if tz_input else "Europe/Brussels"
-
-            bw_input = input("Enter your current bodyweight in kg [65]: ").strip()
-            bw = float(bw_input) if bw_input else 65.0
-
-            goal = input("Enter your goal state (lean_bulk / cut / maintenance) [lean_bulk]: ").strip()
-            goal = goal if goal else "lean_bulk"
-
-            cal_input = input("Enter target daily calories (or press enter for default ~2550) [2550]: ").strip()
-            target_kcal = float(cal_input) if cal_input else 2550.0
-
-            prot_mult = input("Enter protein multiplier g/kg [2.3]: ").strip()
-            p_mult = float(prot_mult) if prot_mult else 2.3
-
-            fat_mult = input("Enter fat multiplier g/kg [1.0]: ").strip()
-            f_mult = float(fat_mult) if fat_mult else 1.0
-
-            print("\n[Setup] Initializing your profile and local bookkeeping files...")
-            init_msg = tools_map["tool_onboard_user"](tz_name, bw, goal, target_kcal, p_mult, f_mult)
-            print(f"[OK] {init_msg}")
-
-            print("\n[Plan] Generating your initial weekly meal plan and split grocery list...")
-            plan_msg = tools_map["tool_generate_meal_plan"]()
-            print(f"[OK] {plan_msg}")
-
-            profile = load_user_profile(data_dir)
-        except (KeyboardInterrupt, EOFError):
-            print("\nOnboarding aborted.")
+        profile = quick_setup_wizard(data_dir=data_dir)
+        if not profile:
+            print("\nSetup aborted.")
             return
 
     user_tz = profile.timezone if profile else "Europe/Brussels"
@@ -225,7 +364,8 @@ def run_interactive_cli(data_dir: str = "data") -> None:
 def serve_adk_playground(
     port: int = 8080,
     host: str = "127.0.0.1",
-    data_dir: str = "data"
+    data_dir: str = "data",
+    auto_open_browser: bool = True
 ) -> None:
     """Starts the Google ADK playground web server for interactive multimodal chat."""
     print("=" * 70)
@@ -237,41 +377,10 @@ def serve_adk_playground(
 
     # 2. Check profile or onboard
     profile = load_user_profile(data_dir)
-    tools = get_agent_tools(data_dir)
-    tools_map = {t.__name__: t for t in tools}
-
     if not profile:
-        print("\n[Welcome] No athlete profile found. Let's do a quick onboarding setup.")
-        try:
-            tz_input = input("Enter your timezone (e.g. Europe/Brussels, UTC+2, America/New_York) [Europe/Brussels]: ").strip()
-            tz_name = tz_input if tz_input else "Europe/Brussels"
-
-            bw_input = input("Enter your current bodyweight in kg [65]: ").strip()
-            bw = float(bw_input) if bw_input else 65.0
-
-            goal = input("Enter your goal state (lean_bulk / cut / maintenance) [lean_bulk]: ").strip()
-            goal = goal if goal else "lean_bulk"
-
-            cal_input = input("Enter target daily calories (or press enter for default ~2550) [2550]: ").strip()
-            target_kcal = float(cal_input) if cal_input else 2550.0
-
-            prot_mult = input("Enter protein multiplier g/kg [2.3]: ").strip()
-            p_mult = float(prot_mult) if prot_mult else 2.3
-
-            fat_mult = input("Enter fat multiplier g/kg [1.0]: ").strip()
-            f_mult = float(fat_mult) if fat_mult else 1.0
-
-            print("\n[Setup] Initializing your profile and local bookkeeping files...")
-            init_msg = tools_map["tool_onboard_user"](tz_name, bw, goal, target_kcal, p_mult, f_mult)
-            print(f"[OK] {init_msg}")
-
-            print("\n[Plan] Generating your initial weekly meal plan and split grocery list...")
-            plan_msg = tools_map["tool_generate_meal_plan"]()
-            print(f"[OK] {plan_msg}")
-
-            profile = load_user_profile(data_dir)
-        except (KeyboardInterrupt, EOFError):
-            print("\nOnboarding aborted.")
+        profile = quick_setup_wizard(data_dir=data_dir)
+        if not profile:
+            print("\nSetup aborted.")
             return
 
     user_tz = profile.timezone if profile else "Europe/Brussels"
@@ -299,7 +408,9 @@ def serve_adk_playground(
     print("    - Upload photos of meals to estimate calories/protein and adapt your plan")
     print("=" * 70 + "\n")
 
-    import subprocess
+    if auto_open_browser:
+        _open_browser_delayed(url)
+
     cmd = [
         sys.executable, "-m", "google.adk.cli", "web",
         "--host", host,
@@ -311,5 +422,40 @@ def serve_adk_playground(
     except KeyboardInterrupt:
         print("\nADK Playground server shut down.")
 
+def run_meals_shortcut(args: list[str] = None) -> None:
+    """Main shortcut entry point: parses flags, ensures setup, opens browser, and serves ADK playground."""
+    if args is None:
+        args = sys.argv[1:]
+
+    is_cli = "--cli" in args
+    is_setup = "--setup" in args
+    no_browser = "--no-browser" in args
+
+    port = 8080
+    host = "127.0.0.1"
+    data_dir = "data"
+
+    for arg in args:
+        if arg.startswith("--port="):
+            try:
+                port = int(arg.split("=")[1])
+            except ValueError:
+                pass
+        elif arg.startswith("--host="):
+            host = arg.split("=")[1]
+        elif not arg.startswith("--"):
+            data_dir = arg
+
+    profile = load_user_profile(data_dir)
+    if profile is None or is_setup:
+        profile = quick_setup_wizard(data_dir=data_dir, force=is_setup)
+
+    if is_cli:
+        run_interactive_cli(data_dir=data_dir)
+        return
+
+    serve_adk_playground(port=port, host=host, data_dir=data_dir, auto_open_browser=(not no_browser))
+
 if __name__ == "__main__":
-    serve_adk_playground()
+    run_meals_shortcut()
+

@@ -16,7 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
-meal-planner = "meal_planner.cli:run_interactive_cli"
+meals = "meal_planner.cli:run_meals_shortcut"
+meal-planner = "meal_planner.cli:run_meals_shortcut"
 
 [tool.setuptools.packages.find]
 include = ["meal_planner*"]

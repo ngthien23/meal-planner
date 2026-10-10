@@ -4,7 +4,7 @@ import json
 import math
 import os
 from typing import Optional
-from meal_planner.models import load_catalog, WeeklyPlan, Ingredient
+from meal_planner.models import load_catalog, WeeklyPlan, Ingredient, get_currency_symbol
 
 @dataclass
 class PantryState:
@@ -141,9 +141,10 @@ def generate_split_groceries(
         pantry_restock=restock_items
     )
 
-def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str) -> None:
+def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str, currency: str = "EUR") -> None:
     """Exports split grocery list to CSV grouped by [Run, Category]."""
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+    symbol = get_currency_symbol(currency)
     fieldnames = [
         "Run", "Category", "Item", "Quantity", "Package_Size", "Estimated_Price_EUR", "Storage_Note"
     ]
@@ -160,6 +161,6 @@ def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str) -> No
                     "Item": item["name"],
                     "Quantity": f"{item['packages']}x ({needed_g_val}g planned)",
                     "Package_Size": item["package_size"],
-                    "Estimated_Price_EUR": f"€{item['estimated_price_eur']:.2f}",
+                    "Estimated_Price_EUR": f"{symbol}{item['estimated_price_eur']:.2f}",
                     "Storage_Note": item["storage_note"]
                 })

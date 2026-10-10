@@ -29,6 +29,21 @@ class Recipe:
     description: str = ""
     protein_ingredient_id: Optional[str] = None
 
+CURRENCY_SYMBOLS: dict[str, str] = {
+    "EUR": "€",
+    "USD": "$",
+    "GBP": "£",
+    "VND": "₫",
+    "CAD": "CA$",
+    "AUD": "A$",
+    "JPY": "¥",
+    "CHF": "CHF",
+}
+
+def get_currency_symbol(currency_code: str) -> str:
+    """Returns the visual currency symbol for a currency code (e.g. EUR -> €)."""
+    return CURRENCY_SYMBOLS.get((currency_code or "").upper().strip(), currency_code)
+
 @dataclass
 class UserProfile:
     timezone: str = "UTC"
@@ -37,11 +52,7 @@ class UserProfile:
     target_calories: float = 2550.0
     protein_multiplier: float = 2.3
     fat_multiplier: float = 1.0
-    restrictions: list[str] = field(default_factory=lambda: [
-        "no dairy milk (fortified soy only)",
-        "ON whey only",
-        "canned tuna only (no fresh tuna)"
-    ])
+    restrictions: list[str] = field(default_factory=list)
     texture_rules: dict = field(default_factory=lambda: {
         "breakfast": "soft_or_liquid",
         "lunch": "solid_batch",
@@ -50,6 +61,7 @@ class UserProfile:
     batch_prep_days: list[str] = field(default_factory=lambda: ["Sunday", "Wednesday"])
     week_start_day: str = "Saturday"
     weeks_ahead: int = 1
+    currency: str = "EUR"
 
 @dataclass
 class MealSlot:

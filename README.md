@@ -4,114 +4,97 @@ An intelligent, macro-accurate, vision-enabled, and zero-waste dietary, memory, 
 
 ---
 
+## ⚡ Instant Shortcut: `meals`
+
+Launch the app with a single word. Running `meals` automatically starts the Google ADK server and **immediately opens the visual playground in your default browser**:
+
+```bash
+meals
+```
+
+Cross-platform convenience options:
+- **Windows Command Prompt:** `meals` (executes `meals.bat`)
+- **Windows PowerShell:** `.\meals` or `meals` (executes `meals.ps1`)
+- **macOS / Linux:** `./meals` (executes `meals` bash script)
+- **Direct Python:** `python main.py`
+
+### Useful Flags
+- `meals` : Launch Google ADK Playground and open in default browser.
+- `meals --setup` : Re-run the interactive Quick Setup wizard to adjust goals, timezone, currency, or API keys.
+- `meals --cli` : Launch the interactive terminal text interface instead of the web playground.
+- `meals --no-browser` : Start the web server without automatically popping up the browser.
+- `meals --port=8080` : Run on a custom port.
+
+---
+
+## 🌟 Quick Setup for New Users (GitHub Clones)
+
+When cloning fresh from GitHub, the repository comes with zero pre-existing user data (`.gitignore` protects your `.env` and `data/` directories).
+
+On first run (or via `meals --setup`), an interactive **Quick Setup Wizard** walks you through:
+
+1. **Gemini API Key:** Prompts for your API key (get a free key at [Google AI Studio](https://aistudio.google.com/app/apikey)) and automatically saves it to `.env`.
+2. **Timezone:** Auto-detects your system timezone with clean fallback (`Europe/Brussels`, `UTC`, `America/New_York`, `Asia/Ho_Chi_Minh`, etc.).
+3. **Currency:** Select your preferred currency (`EUR €`, `USD $`, `GBP £`, `VND ₫`, `CAD CA$`, `AUD A$`, `JPY ¥`, `CHF`).
+4. **Cycle Start Day & Retention Window:** Pick which day starts your week (`Monday`, `Saturday`, `Sunday`) and how many weeks ahead to plan.
+5. **Physical Profile & Goals:** Set your bodyweight and target (`maintenance`, `lean_bulk`, `cut`). Daily calories can be auto-estimated or explicitly entered.
+6. **Dietary Restrictions:** **Clean empty default** (`[]`). No unsolicited bans are imposed; easily specify your own comma-separated allergies or restrictions if desired.
+
+---
+
 ## 🌟 Key Features
 
 1. **Google ADK Playground & Multimodal Vision Support:**
-   - Runs directly in the **Google ADK Playground** web UI (`http://127.0.0.1:8080/dev-ui/?app=meal_planner`).
-   - **Grocery Bills / Receipts:** Upload photos of your store bills (Colruyt, Delhaize, etc.). The agent extracts line items and unit prices for protein sources and staples, automatically invoking price-tracking tools and logging spend.
-   - **Meal Photos:** Upload photos of what you ate. The agent visually estimates calories and protein based on portion sizes, matches or adapts against your daily plan, rebalances macros, and flags unused perishable meat to roll over or freeze.
+   - Runs in the **Google ADK Playground** web UI (`http://127.0.0.1:8080/dev-ui/?app=meal_planner`).
+   - **Grocery Bills / Receipts:** Upload photos of your receipts. The agent extracts line items and unit prices, invoking price-tracking tools and logging spend.
+   - **Meal Photos:** Upload photos of what you ate. The agent visually estimates calories and protein, rebalances macros, and flags unused perishable meat to roll over or freeze.
 
 2. **Relevant Information Startup Hydration:**
    - When a conversation starts, only relevant context files are loaded:
-     - **Athlete Preferences (`data/profile.json`):** Bodyweight, target calories, macro multipliers, and dietary bans.
+     - **Athlete Preferences (`data/profile.json`):** Bodyweight, target calories, macro multipliers, and dietary rules.
      - **Current Week Meal Plan (`data/plans/YYMMDD_meal_plan.csv`):** The isolated active weekly plan for the current cycle.
      - **Active Weekly Memory (`data/memory/weekly.json`) & Durable Facts (`data/memory/long_term.json`)**.
    - Benchmarks disk loading with microsecond resolution (`X.X ms`) without loading unrelated pantry inventories or past weeks' logs.
 
-3. **Two-Tier Memory System with Noise Discrimination:**
-   - **Short-Term (Weekly) Memory (`data/memory/weekly.json`):** Tracks temporary physical fatigue (e.g., lower back tightness), schedule shifts, and perishable meat roll-overs for the active cycle.
-   - **Long-Term (Monthly/Yearly) Memory (`data/memory/long_term.json`):** Durable athlete facts, permanent intolerances, and macro milestones that persist across conversations.
+3. **Strict Formatted Weekly Artifacts (`YYMMDD` Isolated Files):**
+   - **Weekly Meal Plan:** Strict 8 columns: `[Date, Meal, Recipe, Ingredient, P, C, F, Calories]` with clean integer rounded grams.
+   - **Weekly Batch Cook File:** Strict 5 columns: `[Dish, Ingredient, Grocery_Run, Prep_Day, Days_Served]`.
+   - **Weekly Split Grocery List:** Grouped strictly by `[Run, Category]` with date-only runs (`Saturday`, `Wednesday`, `Pantry`) and currency symbol formatting.
+   - Files only exist for current and next week (`weeks_ahead = 1` default) to prevent historical clutter.
+
+4. **Two-Tier Memory System with Noise Discrimination:**
+   - **Short-Term (Weekly) Memory (`data/memory/weekly.json`):** Tracks temporary fatigue, schedule shifts, and perishable roll-overs.
+   - **Long-Term Memory (`data/memory/long_term.json`):** Durable athlete facts, permanent intolerances, and macro milestones.
    - **Relevance Filter:** Rejects pleasantries and trivial chatter (`"ok"`, `"thanks"`, `"sounds good"`, greetings) to prevent memory pollution.
 
-4. **Dated Weekly Plan Artifacts (`YYMMDD` Isolated Files):**
-   - Saves active weekly schedules to isolated files named with the Saturday cycle start date: `data/plans/YYMMDD_meal_plan.csv` and `data/plans/YYMMDD_grocery_list.csv` (e.g., `data/plans/261010_meal_plan.csv`).
-   - Keeps your weekly reading isolated and clean so you are not overwhelmed by historical weeks.
-   - Automatically checks for an existing cycle file before generating a new one.
+5. **Food Discovery & Real-Time Addition:**
+   - Agent dynamically discovers foods from real updates and bills, asks for your confirmation, and adds them to the ingredient catalog with macros and package sizes.
 
-5. **Concise, Artifact-Pointing Conversational Persona:**
-   - When asked about your schedule or grocery list (e.g., *"what is my schedule for this week?"*), the agent points directly to the active artifact path.
-   - Tabular meal rows and full CSV contents are only printed in chat upon explicit request (e.g. *"print the plan in chat"*).
-
-6. **Deterministic Macro & Caloric Engine (Module 2):**
-   - Calculates daily calorie, protein, fat, and carb targets dynamically.
-   - Keeps carbs and fats flat across the 7-day schedule, adjusting raw protein weights (chicken breast, flank beef, pork shoulder, shrimp) to hit exact targets.
-
-7. **Zero-Waste Plan Generation & Raw Weight Precision (Module 3):**
-   - Dictates **raw and dry weights** (e.g. `110g dry pho noodles`, `200g raw lean beef`).
-   - Automatically exhausts retail package sizes (e.g., exactly 1kg frozen shrimp across 4 dinners) to eliminate perishable waste.
-
-8. **Split Grocery Logistics & Food Safety (Module 3 & 4):**
-   - Fresh meat is never stored in the fridge longer than 48–72 hours.
-   - Automatically divides shopping runs into:
-     - **Saturday Run:** Sat/Sun meals, Sunday batch prep (Mon–Wed lunches), and Sat–Tue fresh meats.
-     - **Wednesday Run:** Wed batch prep (Thu–Fri lunches) and Wed–Fri fresh meats.
-     - **Pantry Restock:** Bulk staples (2.27kg ON Whey tub, 5kg rice bags, cooking oil) tracked via `data/pantry.json` and restocked only when running low.
-
-9. **Bookkeeping, Price Tracking & Analytics (Module 4):**
-   - Logs unit prices to `data/prices.csv`.
-   - Records consumed meals and deviations in `data/meal_logs.csv`.
-   - Generates analytics on weekly protein spending and caloric adherence.
-
-10. **Real-Time Dynamic Adaptation (Module 5):**
-    - Seamlessly handles deviations: e.g., *"I was too tired Thursday night and drank a double shake instead"* -> recalculates Friday macros, checks shelf-life of unused fresh meat, and flags it to roll over or freeze.
-    - Handles grocery substitutions: e.g., *"Pork shoulder was €15/kg today so I bought extra chicken"* -> recalculates lunches and raw protein weights.
+6. **Vegetable & Fruit Macro Tracking:**
+   - Tracks total vegetable and fruit intake in daily plans, consumption logs, and analytics summaries.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Installation & First Run
 
 ### 1. Requirements
 - Python 3.10+ (tested on Python 3.13)
 - Gemini API key (`GEMINI_API_KEY`)
 
 ### 2. Installation
-Install project dependencies:
 ```bash
+git clone https://github.com/your-username/meal-planner.git
+cd meal-planner
 pip install -e .
 ```
-*(Or install directly: `pip install google-genai google-adk python-dotenv tzdata`)*
 
-### 3. Configure Gemini API Key
-You can set your Gemini API key in multiple ways:
-- **Interactive First-Run Prompt:** Run `python main.py` directly; if no key is detected, it prompts you and can save it to `.env`.
-- **Environment File:** Put `GEMINI_API_KEY=your_key_here` into `.env`.
-- **Shell Variable:**
-  ```powershell
-  $env:GEMINI_API_KEY="your_gemini_api_key_here"
-  ```
-
-### 4. Serve the Agent in Google ADK Playground
-Launch the ADK Playground web server:
+### 3. Launch
 ```bash
-python main.py
+meals
 ```
-*(Or run `agents-cli playground`)*
+*(Or `python main.py`)*
 
-On startup, you will see the benchmarked hydration log for relevant files:
-```
-[*] Hydrating relevant context files from blank slate...
-  - [Loaded] Athlete Preferences: data\profile.json (0.24 ms)
-  - [Loaded] Current Week Meal Plan: data\plans\261010_meal_plan.csv (0.35 ms)
-  - [Loaded] Active Weekly Memory: data\memory\weekly.json (0.12 ms)
-  - [Loaded] Durable Long-term Facts: data\memory\long_term.json (0.15 ms)
-[OK] Relevant context hydrated in 0.86 ms.
-[*] Active weekly meal plan artifact verified: data\plans\261010_meal_plan.csv
-
-======================================================================
-[*] Launching Google ADK Playground at: http://127.0.0.1:8080/dev-ui/?app=meal_planner
-    - Chat with your Meal Planner agent in the visual playground
-    - Upload photos of grocery bills/receipts to log prices or substitutions
-    - Upload photos of meals to estimate calories/protein and adapt your plan
-======================================================================
-```
-
-Open your browser to `http://127.0.0.1:8080/dev-ui/?app=meal_planner` to interact with the agent and upload photos!
-
-### 5. Alternative: Terminal CLI Mode
-If you prefer the terminal text interface, run:
-```bash
-python main.py --cli
-```
+On first launch, the wizard configures your preferences and generates your initial weekly plan artifacts.
 
 ---
 
@@ -121,13 +104,14 @@ All persistent state is stored in clean, human-readable CSV and JSON files in th
 
 | File | Description |
 |------|-------------|
-| `data/profile.json` | User profile, timezone, bodyweight, macro multipliers, and dietary rules |
-| `data/plans/YYMMDD_meal_plan.csv` | Active isolated weekly meal plan (e.g. `261010_meal_plan.csv`) |
-| `data/plans/YYMMDD_grocery_list.csv` | Active isolated weekly split grocery list |
+| `data/profile.json` | User profile, timezone, currency, bodyweight, macro multipliers, and dietary rules |
+| `data/plans/YYMMDD_meal_plan.csv` | Active isolated weekly meal plan (`[Date, Meal, Recipe, Ingredient, P, C, F, Calories]`) |
+| `data/plans/YYMMDD_batch_cook.csv` | Active batch-cook preparation plan (`[Dish, Ingredient, Grocery_Run, Prep_Day, Days_Served]`) |
+| `data/plans/YYMMDD_grocery_list.csv` | Active isolated weekly split grocery list grouped by `[Run, Category]` |
 | `data/memory/weekly.json` | Short-term weekly memory notes and deviations |
 | `data/memory/long_term.json` | Long-term athlete preferences, food intolerances, and milestones |
 | `data/prices.csv` | Unit price tracker for staple ingredients |
-| `data/meal_logs.csv` | Historical log of meals, deviations, and adherence |
+| `data/meal_logs.csv` | Historical log of meals, deviations, vegetable/fruit grams, and adherence |
 | `data/pantry.json` | Stock levels and reorder thresholds for bulk pantry items |
 
 ---
@@ -138,12 +122,15 @@ The test suite runs with standard library `unittest`:
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
-All **35 tests** pass with 100% coverage across:
+All **51 unit tests** pass with 100% coverage across:
+- Quick setup wizard & default empty preferences
+- Currency formatting & timezone normalization
+- `meals` CLI shortcut & automatic browser launch
 - ADK playground `root_agent` instantiation and discovery
-- Multimodal bill/receipt and meal photo instruction injection
+- Multimodal receipt and meal photo instruction injection
 - Relevant-only startup hydration benchmarking
-- Macro & raw-weight solvers
-- Texture & zero-waste packaging constraints
-- Food safety 72h fridge meat limits & split grocery logistics
-- Two-tier memory discrimination & dated `YYMMDD` weekly artifact isolation
-- Dynamic deviations & price substitutions
+- Strict 8-column weekly meal plan and 5-column batch cook CSV formats
+- Grouped split grocery runs (`[Run, Category]`)
+- Vegetable & fruit macro tracking
+- Food item discovery and confirmation
+- Food safety 72h fridge meat limits & dynamic deviations

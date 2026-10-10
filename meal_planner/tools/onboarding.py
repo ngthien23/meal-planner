@@ -97,11 +97,7 @@ def init_user_profile(data_dir: str, profile_data: dict) -> UserProfile:
         target_calories=float(profile_data.get("target_calories", 2550.0)),
         protein_multiplier=float(profile_data.get("protein_multiplier", 2.3)),
         fat_multiplier=float(profile_data.get("fat_multiplier", 1.0)),
-        restrictions=profile_data.get("restrictions", [
-            "no dairy milk (fortified soy only)",
-            "ON whey only",
-            "canned tuna only (no fresh tuna)"
-        ]),
+        restrictions=profile_data.get("restrictions", []),
         texture_rules=profile_data.get("texture_rules", {
             "breakfast": "soft_or_liquid",
             "lunch": "solid_batch",
@@ -109,7 +105,8 @@ def init_user_profile(data_dir: str, profile_data: dict) -> UserProfile:
         }),
         batch_prep_days=profile_data.get("batch_prep_days", ["Sunday", "Wednesday"]),
         week_start_day=profile_data.get("week_start_day", "Saturday"),
-        weeks_ahead=int(profile_data.get("weeks_ahead", 1))
+        weeks_ahead=int(profile_data.get("weeks_ahead", 1)),
+        currency=profile_data.get("currency", "EUR")
     )
     profile_path = os.path.join(data_dir, "profile.json")
     with open(profile_path, "w", encoding="utf-8") as f:
