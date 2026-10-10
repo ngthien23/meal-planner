@@ -160,3 +160,70 @@ class TestInventoryReconciliation(unittest.TestCase):
         st, actions = reconcile_inventory_state(self.test_dir, current_dt=chat_dt, user_tz="Europe/Brussels")
         self.assertEqual(st.last_reconciled_at, chat_dt.isoformat())
         self.assertTrue(any("consumed" in a.lower() for a in actions))
+
+    def test_depleted_actual_meat_allows_assumed_restock(self):
+        tz = zoneinfo.ZoneInfo("Europe/Brussels")
+        # User had actual chicken breast, but finished it (quantity_g = 0.0)
+        state = InventoryState(
+            last_reconciled_at=datetime(2026, 10, 10, 6, 0, tzinfo=tz).isoformat(),
+            items=[InventoryItem("chicken_breast", "Chicken Breast Fillet", 0.0, "actual", "user_report", "2026-10-10")]
+        )
+        save_inventory_state(self.test_dir, state)
+
+        # Saturday grocery run happens at 09:00
+        st, actions = reconcile_inventory_state(self.test_dir, current_dt=datetime(2026, 10, 10, 9, 0, tzinfo=tz), user_tz="Europe/Brussels")
+        chicken = next(i for i in st.items if i.food_id == "chicken_breast")
+        # Should be restocked from the planned grocery run
+        self.assertGreater(chicken.quantity_g, 0.0)
+        self.assertEqual(chicken.status, "assumed")
+        self.assertTrue(any("purchased from saturday run" in a.lower() for a in actions))
+
+    def test_skipped_or_eat_out_meals_in_meal_logs_do_not_deduct_stock(self):
+        import csv
+        tz = zoneinfo.ZoneInfo("Europe/Brussels")
+        # User has 1000g chicken breast
+        state = InventoryState(
+            last_reconciled_at=datetime(2026, 10, 10, 11, 0, tzinfo=tz).isoformat(),
+            items=[InventoryItem("chicken_breast", "Chicken Breast Fillet", 1000.0, "actual", "user_report", "2026-10-10")]
+        )
+        save_inventory_state(self.test_dir, state)
+
+        # Log Lunch as skipped in meal_logs.csv
+        logs_path = os.path.join(self.test_dir, "meal_logs.csv")
+        with open(logs_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Date", "Meal", "Recipe", "Adherence", "Protein_Cost_EUR", "Calories", "Veg_g", "Fruit_g", "Notes"])
+            writer.writerow(["2026-10-10", "Lunch", "Gà Xào Sả Ớt", "skipped", "0.0", "0.0", "0", "0", "Skipped lunch"])
+
+        # Chat happens at 15:00 (Lunch cutoff 14:30 has passed)
+        st, actions = reconcile_inventory_state(self.test_dir, current_dt=datetime(2026, 10, 10, 15, 0, tzinfo=tz), user_tz="Europe/Brussels")
+        chicken = next(i for i in st.items if i.food_id == "chicken_breast")
+        # Chicken breast should NOT be deducted because Lunch was skipped
+        self.assertEqual(chicken.quantity_g, 1000.0)
+        self.assertFalse(any("lunch consumed" in a.lower() for a in actions))
+
+    def test_grocery_runs_from_prior_cycle_not_loaded(self):
+        import csv
+        tz = zoneinfo.ZoneInfo("Europe/Brussels")
+        # Ensure plans directory exists
+        plans_dir = os.path.join(self.test_dir, "plans")
+        os.makedirs(plans_dir, exist_ok=True)
+
+        # Create an old grocery list from prior cycle 261003
+        old_grocery = os.path.join(plans_dir, "261003_grocery_list.csv")
+        with open(old_grocery, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Run", "Category", "Item", "Quantity", "Package_Size", "Estimated_Price_EUR", "Storage_Note"])
+            writer.writerow(["Saturday", "Meat", "Old Meat", "1x (500g planned)", "500g", "€5.00", "Fridge"])
+
+        state = InventoryState(
+            last_reconciled_at=datetime(2026, 10, 10, 6, 0, tzinfo=tz).isoformat(),
+            items=[]
+        )
+        save_inventory_state(self.test_dir, state)
+
+        # Current chat on 2026-10-10 (current cycle is 261010)
+        st, actions = reconcile_inventory_state(self.test_dir, current_dt=datetime(2026, 10, 10, 9, 0, tzinfo=tz), user_tz="Europe/Brussels")
+        # Old Meat from 261003 should NOT be in items
+        self.assertFalse(any(i.food_id == "old_meat" for i in st.items))
+

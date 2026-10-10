@@ -221,6 +221,26 @@ def reconcile_inventory_state(
     if not (os.path.exists(plan_path) and os.path.exists(grocery_path)):
         ensure_weekly_plan_artifacts(profile, data_dir, reference_dt=current_dt)
 
+    # Determine last reconciled datetime and current cycle bounds
+    try:
+        current_cycle_start = datetime.strptime(prefix, "%y%m%d").date()
+    except Exception:
+        current_cycle_start = current_dt.date()
+
+    last_dt = None
+    if state.last_reconciled_at:
+        try:
+            last_dt = datetime.fromisoformat(state.last_reconciled_at)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=tz)
+            else:
+                last_dt = last_dt.astimezone(tz)
+        except Exception:
+            last_dt = None
+
+    if last_dt is None:
+        last_dt = datetime.combine(current_cycle_start, time(0, 0), tzinfo=tz)
+
     try:
         catalog_ingredients, _ = load_catalog(data_dir=data_dir)
     except Exception:
@@ -236,43 +256,40 @@ def reconcile_inventory_state(
         keywords = ("chicken", "beef", "pork", "meat", "shrimp", "fish", "salmon", "turkey", "lamb", "steak", "thigh", "wing", "breast")
         return any(k in lower_id for k in keywords)
 
+    # Only actual meat with positive stock on hand suppresses assumed runs
     user_has_actual_meat = any(
-        it.status == "actual" and is_meat_or_perishable(it.food_id)
+        it.status == "actual" and it.quantity_g > 0 and is_meat_or_perishable(it.food_id)
         for it in state.items
     )
 
     actions: list[str] = []
 
-    # 1. Process scheduled grocery runs on or before current_dt.date()
+    # 1. Process scheduled grocery runs bounded by current cycle start and last_dt.date()
     grocery_files = []
     if os.path.exists(plans_dir):
         for fn in sorted(os.listdir(plans_dir)):
-            if re.match(r"^\d{6}_grocery_list\.csv$", fn):
-                grocery_files.append(os.path.join(plans_dir, fn))
+            m = re.match(r"^(\d{6})_grocery_list\.csv$", fn)
+            if m:
+                try:
+                    f_start = datetime.strptime(m.group(1), "%y%m%d").date()
+                    if f_start >= current_cycle_start:
+                        grocery_files.append((os.path.join(plans_dir, fn), f_start))
+                except Exception:
+                    pass
     if not grocery_files and os.path.exists(grocery_path):
-        grocery_files.append(grocery_path)
+        grocery_files.append((grocery_path, current_cycle_start))
     if not grocery_files and os.path.exists(os.path.join(data_dir, "grocery_list.csv")):
-        grocery_files.append(os.path.join(data_dir, "grocery_list.csv"))
+        grocery_files.append((os.path.join(data_dir, "grocery_list.csv"), current_cycle_start))
 
-    for g_file in grocery_files:
+    lower_bound_run_date = max(current_cycle_start, last_dt.date())
+
+    for g_file, file_cycle_start in grocery_files:
         try:
             with open(g_file, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
         except Exception:
             continue
-
-        m_pref = re.match(r"^(\d{6})_grocery_list\.csv$", os.path.basename(g_file))
-        if m_pref:
-            try:
-                file_cycle_start = datetime.strptime(m_pref.group(1), "%y%m%d").date()
-            except Exception:
-                file_cycle_start = current_dt.date()
-        else:
-            try:
-                file_cycle_start = datetime.strptime(prefix, "%y%m%d").date()
-            except Exception:
-                file_cycle_start = current_dt.date()
 
         runs_by_label: dict[str, list[dict]] = {}
         for r in rows:
@@ -296,7 +313,7 @@ def reconcile_inventory_state(
                 if run_date is None:
                     run_date = file_cycle_start
 
-            if run_date <= current_dt.date():
+            if lower_bound_run_date <= run_date <= current_dt.date():
                 run_key = f"{run_date.isoformat()}_{run_lbl}"
                 if run_key not in state.assumed_runs:
                     run_display = run_lbl if "run" in run_lbl.lower() else f"{run_lbl} Run"
@@ -330,49 +347,53 @@ def reconcile_inventory_state(
                         is_perishable = is_meat_or_perishable(food_id)
 
                         existing_actual = next((i for i in state.items if i.food_id == food_id and i.status == "actual"), None)
-                        if existing_actual:
+                        if existing_actual and existing_actual.quantity_g > 0:
                             continue
 
                         if is_perishable and user_has_actual_meat:
                             continue
 
-                        existing_assumed = next((i for i in state.items if i.food_id == food_id and i.status == "assumed"), None)
-                        if existing_assumed:
-                            existing_assumed.quantity_g = round(existing_assumed.quantity_g + qty_g, 2)
+                        if existing_actual and existing_actual.quantity_g <= 0:
+                            existing_actual.quantity_g = round(qty_g, 2)
+                            existing_actual.status = "assumed"
+                            existing_actual.source = "planned_run"
+                            existing_actual.purchased_date = run_date.isoformat()
                         else:
-                            state.items.append(
-                                InventoryItem(
-                                    food_id=food_id,
-                                    name=raw_item_name,
-                                    quantity_g=round(qty_g, 2),
-                                    status="assumed",
-                                    source="planned_run",
-                                    purchased_date=run_date.isoformat()
+                            existing_assumed = next((i for i in state.items if i.food_id == food_id and i.status == "assumed"), None)
+                            if existing_assumed:
+                                existing_assumed.quantity_g = round(existing_assumed.quantity_g + qty_g, 2)
+                            else:
+                                state.items.append(
+                                    InventoryItem(
+                                        food_id=food_id,
+                                        name=raw_item_name,
+                                        quantity_g=round(qty_g, 2),
+                                        status="assumed",
+                                        source="planned_run",
+                                        purchased_date=run_date.isoformat()
+                                    )
                                 )
-                            )
                         actions.append(f"Assumed {int(round(qty_g))}g {raw_item_name} purchased from {run_display}")
 
                     state.assumed_runs.append(run_key)
 
-    # 2. Process meal consumption between last_reconciled_at and current_dt
-    last_dt = None
-    if state.last_reconciled_at:
+    # 2. Check meal_logs.csv for skipped or eaten-out meal slots
+    skipped_or_eatout_slots = set()
+    meal_logs_path = os.path.join(data_dir, "meal_logs.csv")
+    if os.path.exists(meal_logs_path):
         try:
-            last_dt = datetime.fromisoformat(state.last_reconciled_at)
-            if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=tz)
-            else:
-                last_dt = last_dt.astimezone(tz)
+            with open(meal_logs_path, "r", encoding="utf-8") as f:
+                log_reader = csv.DictReader(f)
+                for log_row in log_reader:
+                    log_date = log_row.get("Date", "").strip()
+                    log_meal = log_row.get("Meal", "").strip().lower()
+                    log_adh = log_row.get("Adherence", "").strip().lower()
+                    if log_adh in ("skipped", "eat_out", "eaten_out"):
+                        skipped_or_eatout_slots.add((log_date, log_meal))
         except Exception:
-            last_dt = None
+            pass
 
-    if last_dt is None:
-        try:
-            cycle_start_date = datetime.strptime(prefix, "%y%m%d").date()
-            last_dt = datetime.combine(cycle_start_date, time(0, 0), tzinfo=tz)
-        except Exception:
-            last_dt = datetime.combine(current_dt.date(), time(0, 0), tzinfo=tz)
-
+    # 3. Process meal consumption between last_reconciled_at and current_dt
     cutoff_hours = {
         "breakfast": time(10, 0),
         "lunch": time(14, 30),
@@ -455,6 +476,10 @@ def reconcile_inventory_state(
         cutoff_dt = datetime.combine(m_date, cutoff_t, tzinfo=tz)
 
         if last_dt < cutoff_dt <= current_dt:
+            # If slot was recorded as skipped or eaten out, do NOT deduct home stock
+            if (date_str, m_lower) in skipped_or_eatout_slots:
+                continue
+
             ing_str = row.get("Ingredient", "")
             pieces = [p.strip() for p in re.split(r"[;,]", ing_str) if p.strip()]
 
@@ -481,3 +506,4 @@ def reconcile_inventory_state(
     state.last_reconciled_at = current_dt.isoformat()
     save_inventory_state(data_dir, state)
     return state, actions
+
