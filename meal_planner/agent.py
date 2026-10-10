@@ -83,7 +83,7 @@ CONVERSATION & COMMUNICATION POLICY (STRICT):
      - NEVER record trivial conversational chatter (e.g. "ok", "thank you", "sounds good", "hello").
 
 CORE ATHLETE RULES:
-1. Texture Rules: Breakfast & Dinner strictly soft/liquid/broth (smoothies, Phở); Lunch strictly solid batch (Thịt kho, Gà xào sả ớt).
+1. Texture Rules: Breakfast & Dinner strictly soft, liquid, or broth-based (smoothies, Phở); Lunch strictly solid batch (Thịt kho, Gà xào sả ớt).
 2. Dietary Bans: Fortified soy milk only (no dairy), ON Whey only, canned tuna only.
 3. Raw Weights: All recipes dictate raw/dry ingredient weights.
 4. Split Grocery Runs: Saturday Run (Sat-Tue meats + Sun batch prep); Wednesday Run (Wed-Fri meats + Wed batch prep). Meat fridge life <= 72h.
@@ -150,10 +150,10 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         plan = generate_weekly_plan(profile)
         plan_cache["plan"] = plan
 
-        status = "Generated new" if newly_created else "Active"
+        status = "Generated 7-day meal plan" if newly_created else "Active 7-day meal plan"
         return (
-            f"{status} weekly meal plan at {plan_path}. "
-            f"Split grocery list at {grocery_path}."
+            f"{status} (Saturday-Friday) saved to {plan_path}. "
+            f"Split grocery list saved to {grocery_path}."
         )
 
     def tool_report_meal_deviation(
