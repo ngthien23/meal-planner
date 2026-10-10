@@ -8,8 +8,8 @@ import zoneinfo
 from meal_planner.models import UserProfile
 from meal_planner.tools.onboarding import init_user_profile
 from meal_planner.tools.meal_generator import ensure_weekly_plan_artifacts, get_current_cycle_prefix
-from meal_planner.tools.inventory import load_inventory_state
-from meal_planner.agent import get_agent_tools
+from meal_planner.tools.memory import MemoryManager
+from meal_planner.agent import get_agent_tools, build_system_instruction
 
 class TestStreamlinedAgentFlow(unittest.TestCase):
     def setUp(self):
@@ -30,28 +30,18 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
 
     def test_record_on_hand_stock_and_update_artifacts(self):
         # 1. User reports on-hand stock: 500g wings and 500g chicken thighs
-        update_stock_fn = self.tools["tool_update_on_hand_stock"]
-        msg = update_stock_fn([
-            {"name": "Chicken Wings", "quantity_g": 500.0},
-            {"name": "Chicken Thigh Quarters", "quantity_g": 500.0}
-        ])
-        self.assertIn("Updated actual stock", msg)
+        # Agent records dated stock in Short-Term Memory (weekly.md)
+        save_mem_fn = self.tools["tool_save_memory_note"]
+        msg = save_mem_fn("- [2026-10-10] Stock on hand: 500g Chicken Wings, 500g Chicken Thigh Quarters", tier="weekly")
+        self.assertIn("Saved to weekly memory", msg)
 
-        # Verify inventory state
-        inv = load_inventory_state(self.test_dir)
-        actual_items = [i for i in inv.items if i.status == "actual"]
-        self.assertEqual(len(actual_items), 2)
-        total_qty = sum(i.quantity_g for i in actual_items)
-        self.assertEqual(total_qty, 1000.0)
+        # Verify memory manager has recorded the note
+        mem_ctx = MemoryManager(self.test_dir).get_context()
+        self.assertTrue(any("Chicken Wings" in n and "500g" in n for n in mem_ctx["weekly"]))
 
-        # 2. Agent checks inventory and macro targets
-        get_inv_fn = self.tools["tool_get_inventory"]
-        inv_str = get_inv_fn()
-        self.assertIn("Chicken Wings: 500g", inv_str)
-        self.assertIn("Chicken Thigh Quarters: 500g", inv_str)
-
+        # 2. Agent checks macro targets
         get_macros_fn = self.tools["tool_get_macro_targets"]
-        macros_str = get_macros_fn()
+        macros_str = get_macros_fn(70.0, 2500.0, 2.2, 0.8)
         self.assertIn("2500 kcal", macros_str)
         self.assertIn("Rough Targets", macros_str)
 
@@ -114,35 +104,37 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("Ground Beef", grocery_str)
 
     def test_retrospective_skipped_meal_and_eating_out_workflow(self):
+        save_mem_fn = self.tools["tool_save_memory_note"]
         # 1. User reports skipping breakfast
-        report_dev_fn = self.tools["tool_report_past_meal_deviation"]
-        res_skip = report_dev_fn("2026-10-10", "breakfast", "skipped")
-        self.assertIn("skipped", res_skip.lower())
-
-        # Verify stock was restored in inventory and carried deficit exists
-        inv = load_inventory_state(self.test_dir)
-        self.assertGreater(inv.carried_calories, 0)
-        self.assertTrue(any(i.quantity_g > 0 for i in inv.items))
+        res_skip = save_mem_fn("- [2026-10-10] Skipped Breakfast; rolled over 400 kcal and 25g protein to weekly deficit", tier="weekly")
+        self.assertIn("Saved to weekly memory", res_skip)
 
         # 2. User reports eating out for lunch
-        res_eatout = report_dev_fn(
-            "2026-10-10", "lunch", "eat_out",
-            actual_calories=850.0, actual_protein_g=45.0,
-            notes="Vietnamese Pho Ga restaurant"
-        )
-        self.assertIn("eat_out", res_eatout.lower())
+        res_eatout = save_mem_fn("- [2026-10-10] Ate out for Lunch at Vietnamese Pho Ga restaurant (est. 850 kcal, 45g protein); home lunch ingredients remained unused", tier="weekly")
+        self.assertIn("Saved to weekly memory", res_eatout)
 
-        # Verify catch-up does not deduct the home stock for skipped or eaten-out slots
-        catch_up_fn = self.tools["tool_catch_up_inventory"]
-        catch_up_msg = catch_up_fn()
-        self.assertTrue(len(catch_up_msg) > 0)
+        # Verify memory records both deviations
+        mem_ctx = MemoryManager(self.test_dir).get_context()
+        self.assertTrue(any("Skipped Breakfast" in n for n in mem_ctx["weekly"]))
+        self.assertTrue(any("Ate out for Lunch" in n for n in mem_ctx["weekly"]))
 
-        # Food items still in inventory
-        inv2 = load_inventory_state(self.test_dir)
-        self.assertTrue(any(i.quantity_g > 0 for i in inv2.items))
+        # Agent updates meal plan for dinner or upcoming days to account for carried deficit
+        update_meal_plan_fn = self.tools["tool_update_meal_plan"]
+        plan_msg = update_meal_plan_fn([
+            {
+                "Date": "2026-10-10",
+                "Meal": "Dinner",
+                "Recipe": "Comforting Chicken Soup with Extra Whey Shake",
+                "Ingredient": "250g Chicken Wings; 100g Rice Noodles; 30g ON Whey",
+                "P": 60,
+                "C": 45,
+                "F": 12,
+                "Calories": 530
+            }
+        ])
+        self.assertIn("Successfully updated", plan_msg)
 
     def test_agent_prompt_train_of_thought_and_guidelines(self):
-        from meal_planner.agent import build_system_instruction
         prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
         
         # Verify 3-step meal planning train of thought
@@ -155,10 +147,14 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("NO RIGID LOCAL NUTRITION OR PRICE BOOKKEEPING", prompt)
         
         # Verify grocery receipt guideline and scope distinction
-        self.assertIn("PRIMARY PURPOSE: Update PROTEIN stock", prompt)
+        self.assertIn("PRIMARY PURPOSE: Note purchased protein stock in Short-Term Memory", prompt)
         self.assertIn("IGNORE non-protein items", prompt)
-        self.assertIn("STOCK BOOKKEEPING VS. GROCERY LIST SCOPE", prompt)
-        self.assertIn("Fridge Stock Bookkeeping", prompt)
+        self.assertIn("STOCK TRACKING VS. GROCERY LIST SCOPE", prompt)
+        self.assertIn("On-Hand Stock Tracking in Short-Term Memory", prompt)
         self.assertIn("tracks PROTEIN ONLY", prompt)
         self.assertIn("Weekly Grocery List", prompt)
         self.assertIn("MUST comprehensively include ALL food types", prompt)
+
+
+if __name__ == "__main__":
+    unittest.main()

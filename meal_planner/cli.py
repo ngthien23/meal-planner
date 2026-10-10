@@ -111,14 +111,11 @@ def quick_setup_wizard(
     data_dir: str = "data",
     input_fn=None,
     force: bool = False
-) -> UserProfile:
+) -> None:
     """Quick setup wizard: prompts for API key if missing (or when force=True to edit/update)."""
     if input_fn is None:
         input_fn = input
     data_dir = resolve_data_dir(data_dir)
-    profile = load_user_profile(data_dir)
-    if profile is not None and not force:
-        return profile
 
     current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
     if not current_key or force:
@@ -132,40 +129,11 @@ def quick_setup_wizard(
             entered_key = input_fn(prompt_str).strip()
             if entered_key:
                 save_env_api_key(entered_key)
-                if not entered_key.startswith("AIzaSy"):
-                    print("[!] Note: Standard permanent Gemini API keys start with 'AIzaSy' (from https://aistudio.google.com/app/apikey).")
-                    print("    If this is a temporary session token, it may expire after a short time.")
                 print("[OK] Saved API key.")
             elif not current_key:
                 print("No API key entered. You can set it later by running: meals --setup")
         except (KeyboardInterrupt, EOFError):
             pass
-
-    # Auto-detect default system timezone
-    default_tz = "UTC"
-    try:
-        local_tz = datetime.now().astimezone().tzinfo
-        if hasattr(local_tz, "key") and local_tz.key:
-            default_tz = local_tz.key
-    except Exception:
-        pass
-
-    if profile is None:
-        profile_data = {
-            "timezone": default_tz,
-            "bodyweight_kg": 0.0,
-            "goal_state": "",
-            "target_calories": 0.0,
-            "protein_multiplier": 2.2,
-            "fat_multiplier": 1.0,
-            "restrictions": [],
-            "week_start_day": "Saturday",
-            "weeks_ahead": 1,
-            "currency": "EUR",
-            "is_onboarded": False
-        }
-        profile = init_user_profile(data_dir, profile_data)
-    return profile
 
 
 def run_interactive_cli(data_dir: str = "data") -> None:
@@ -175,21 +143,17 @@ def run_interactive_cli(data_dir: str = "data") -> None:
     print("=" * 70)
 
     data_dir = resolve_data_dir(data_dir)
+    user_tz = "Europe/Brussels"
+    try:
+        local_tz = datetime.now().astimezone().tzinfo
+        if hasattr(local_tz, "key") and local_tz.key:
+            user_tz = local_tz.key
+    except Exception:
+        pass
 
-    # 1. Check or perform onboarding
-    profile = load_user_profile(data_dir)
     tools = get_agent_tools(data_dir)
-    tools_map = {t.__name__: t for t in tools}
 
-    if not profile:
-        profile = quick_setup_wizard(data_dir=data_dir)
-        if not profile:
-            print("\nSetup aborted.")
-            return
-
-    user_tz = profile.timezone if profile else "Europe/Brussels"
-
-    # 2. Blank-slate memory hydration & weekly plan check (only relevant files)
+    # 1. Blank-slate memory hydration
     print("\n[*] Hydrating relevant context files from blank slate...")
     mem_mgr = MemoryManager(data_dir)
     records, total_ms = mem_mgr.hydrate(user_timezone=user_tz)
@@ -197,24 +161,13 @@ def run_interactive_cli(data_dir: str = "data") -> None:
         print(f"  - [Loaded] {label}: {path} ({elapsed_ms:.2f} ms)")
     print(f"[OK] Relevant context hydrated in {total_ms:.2f} ms.")
 
-    if profile and profile.is_onboarded and profile.target_calories > 0:
-        plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
-        if newly_created:
-            print(f"[*] Generated isolated weekly meal plan for this cycle: {plan_path}")
-        else:
-            print(f"[*] Active weekly meal plan artifact verified: {plan_path}")
-
     sys_instruction = build_system_instruction(user_tz, data_dir=data_dir)
 
-    # 3. Check and prompt for API key if missing
+    # 2. Check and prompt for API key if missing
     api_key = ensure_api_key()
     if not api_key:
-        print("\nRunning in local deterministic mode. Supported commands:")
-        print("  /plan        - Re-generate and export meal plan & grocery CSVs")
-        print("  /groceries   - View current split grocery list")
-        print("  /analytics   - View protein spend & adherence analytics")
-        print("  /memory      - View stored short-term and long-term notes")
-        print("  /exit        - Exit the agent\n")
+        print("\nRunning in local deterministic mode.")
+        print("Type /exit to quit.\n")
 
     # Set up Gemini client if API key and library are present
     client = None
@@ -236,8 +189,8 @@ def run_interactive_cli(data_dir: str = "data") -> None:
     except Exception as e:
         print(f"Note: Gemini client initialization ({e}). Local fallback mode active.")
 
-    print(f"\nTimezone: {user_tz} | Bodyweight: {profile.bodyweight_kg}kg | Goal: {profile.goal_state}")
-    print("You can chat naturally (e.g. 'I drank a double shake instead of Thursday dinner', 'Pork was €15/kg so I bought chicken').")
+    print(f"\nTimezone: {user_tz}")
+    print("You can chat naturally.")
     print("Type /exit to quit.\n")
 
     while True:
@@ -331,30 +284,21 @@ def serve_adk_playground(
     # 1. API key verification
     ensure_api_key()
 
-    # 2. Check profile or onboard
-    profile = load_user_profile(data_dir)
-    if not profile:
-        profile = quick_setup_wizard(data_dir=data_dir)
-        if not profile:
-            print("\nSetup aborted.")
-            return
+    user_tz = "Europe/Brussels"
+    try:
+        local_tz = datetime.now().astimezone().tzinfo
+        if hasattr(local_tz, "key") and local_tz.key:
+            user_tz = local_tz.key
+    except Exception:
+        pass
 
-    user_tz = profile.timezone if profile else "Europe/Brussels"
-
-    # 3. Blank-slate memory hydration (only relevant files)
+    # 2. Blank-slate memory hydration (only relevant files)
     print("\n[*] Hydrating relevant context files from blank slate...")
     mem_mgr = MemoryManager(data_dir)
     records, total_ms = mem_mgr.hydrate(user_timezone=user_tz)
     for label, path, elapsed_ms in records:
         print(f"  - [Loaded] {label}: {path} ({elapsed_ms:.2f} ms)")
     print(f"[OK] Relevant context hydrated in {total_ms:.2f} ms.")
-
-    if profile and profile.is_onboarded and profile.target_calories > 0:
-        plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
-        if newly_created:
-            print(f"[*] Generated isolated weekly meal plan for this cycle: {plan_path}")
-        else:
-            print(f"[*] Active weekly meal plan artifact verified: {plan_path}")
 
     url = f"http://{host}:{port}/dev-ui/?app=meal_planner"
     print("\n" + "=" * 70)
@@ -418,9 +362,9 @@ Options:
             data_dir = arg
 
     data_dir = resolve_data_dir(data_dir)
-    profile = load_user_profile(data_dir)
-    if profile is None or is_setup:
-        profile = quick_setup_wizard(data_dir=data_dir, force=is_setup)
+    current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    if is_setup or not current_key:
+        quick_setup_wizard(data_dir=data_dir, force=is_setup)
         if is_setup:
             print("\n[OK] Setup complete. Run 'meals' to launch the agent playground.")
             return

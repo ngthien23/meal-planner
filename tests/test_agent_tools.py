@@ -7,11 +7,22 @@ class TestAgentTools(unittest.TestCase):
     def test_agent_tools_registered(self):
         tools = get_agent_tools()
         tool_names = [t.__name__ for t in tools]
-        self.assertIn("tool_onboard_user", tool_names)
-        self.assertIn("tool_generate_meal_plan", tool_names)
-        self.assertIn("tool_report_meal_deviation", tool_names)
-        self.assertIn("tool_substitute_ingredient", tool_names)
-        self.assertIn("tool_get_analytics", tool_names)
+        self.assertEqual(len(tool_names), 8)
+        self.assertIn("tool_save_memory_note", tool_names)
+        self.assertIn("tool_get_macro_targets", tool_names)
+        self.assertIn("tool_get_meal_plan", tool_names)
+        self.assertIn("tool_update_meal_plan", tool_names)
+        self.assertIn("tool_get_grocery_list", tool_names)
+        self.assertIn("tool_update_grocery_list", tool_names)
+        self.assertIn("tool_get_batch_cook", tool_names)
+        self.assertIn("tool_update_batch_cook", tool_names)
+
+        # Legacy programmatic solvers must not be registered
+        self.assertNotIn("tool_generate_meal_plan", tool_names)
+        self.assertNotIn("tool_report_meal_deviation", tool_names)
+        self.assertNotIn("tool_substitute_ingredient", tool_names)
+        self.assertNotIn("tool_catch_up_inventory", tool_names)
+        self.assertNotIn("tool_get_inventory", tool_names)
 
     def test_system_instruction_contains_temporal_context(self):
         prompt = build_system_instruction("Europe/Brussels")
@@ -24,17 +35,33 @@ class TestAgentTools(unittest.TestCase):
         os.makedirs(test_dir, exist_ok=True)
         try:
             tools_map = {t.__name__: t for t in get_agent_tools(data_dir=test_dir)}
-            # 1. Onboard
-            msg = tools_map["tool_onboard_user"]("Europe/Brussels", 65.0, "lean_bulk", 2550.0, 2.3, 1.0)
-            self.assertIn("Profile created", msg)
+            # 1. Save profile to long-term memory
+            msg = tools_map["tool_save_memory_note"]("Bodyweight: 65.0 kg | Goal: lean_bulk | Target Calories: 2550 kcal", tier="long_term")
+            self.assertIn("Saved to long-term memory", msg)
             
-            # 2. Generate plan
-            plan_msg = tools_map["tool_generate_meal_plan"]()
-            self.assertIn("Generated 7-day meal plan", plan_msg)
+            # 2. Get macro guidelines
+            macros = tools_map["tool_get_macro_targets"](65.0, 2550.0, 2.2, 1.0)
+            self.assertIn("Rough Targets", macros)
+            self.assertIn("2550 kcal", macros)
 
-            # 3. Report deviation
-            dev_msg = tools_map["tool_report_meal_deviation"]("Thursday", "dinner", "Double Whey Shake", 50.0, 300.0)
-            self.assertIn("Adapted meal plan", dev_msg)
+            # 3. Update meal plan artifact
+            update_res = tools_map["tool_update_meal_plan"]([
+                {
+                    "Date": "2026-10-10",
+                    "Meal": "Lunch",
+                    "Recipe": "Air Fried Chicken",
+                    "Ingredient": "250g Chicken Thighs; 150g Rice",
+                    "P": 50,
+                    "C": 40,
+                    "F": 15,
+                    "Calories": 500
+                }
+            ])
+            self.assertIn("Successfully updated", update_res)
+
+            # 4. Read meal plan artifact
+            plan = tools_map["tool_get_meal_plan"]("2026-10-10")
+            self.assertIn("Air Fried Chicken", plan)
         finally:
             if os.path.exists(test_dir):
                 shutil.rmtree(test_dir)

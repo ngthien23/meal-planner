@@ -48,19 +48,13 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
         self.assertEqual(loaded.currency, "USD")
 
     def test_quick_setup_wizard_interactive_defaults(self):
-        """Quick setup wizard should only ask for API key if missing and initialize un-onboarded profile."""
+        """Quick setup wizard should prompt for API key and save to .env without creating profile.json."""
         env_file = os.path.join(self.test_dir, ".env")
         inputs = iter(["AIzaSyTestKey123"])
 
         with patch("builtins.input", side_effect=lambda prompt="": next(inputs)), \
              patch("meal_planner.cli.ENV_PATH", env_file):
-            profile = quick_setup_wizard(data_dir=self.test_dir, force=True)
-
-        self.assertIsNotNone(profile)
-        self.assertFalse(profile.is_onboarded)
-        self.assertEqual(profile.restrictions, [])
-        self.assertEqual(profile.bodyweight_kg, 0.0)
-        self.assertEqual(profile.target_calories, 0.0)
+            quick_setup_wizard(data_dir=self.test_dir, force=True)
 
         # Verify .env was written
         self.assertTrue(os.path.exists(env_file))
@@ -68,11 +62,9 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
             content = f.read()
         self.assertIn("AIzaSyTestKey123", content)
 
-        # Verify profile was saved to disk
-        loaded = load_user_profile(self.test_dir)
-        self.assertIsNotNone(loaded)
-        self.assertFalse(loaded.is_onboarded)
-        self.assertEqual(loaded.restrictions, [])
+        # Verify profile.json was NOT created
+        profile_file = os.path.join(self.test_dir, "profile.json")
+        self.assertFalse(os.path.exists(profile_file))
 
         # Verify no plan files were pre-generated
         plans_dir = os.path.join(self.test_dir, "plans")

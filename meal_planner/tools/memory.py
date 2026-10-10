@@ -140,7 +140,6 @@ class MemoryManager:
                 current_plan_csv = root_plan
 
         targets = [
-            ("Athlete Preferences", os.path.join(self.data_dir, "profile.json")),
             ("Current Week Meal Plan", current_plan_csv),
             ("Active Weekly Memory", self.weekly_path if os.path.exists(self.weekly_path) else os.path.join(self.memory_dir, "weekly.json")),
             ("Durable Long-term Facts", self.long_term_path if os.path.exists(self.long_term_path) else os.path.join(self.memory_dir, "long_term.json")),

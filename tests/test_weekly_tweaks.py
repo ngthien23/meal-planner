@@ -221,16 +221,25 @@ class TestWeeklyTweaks(unittest.TestCase):
         # Every (Run, Category) tuple must appear at most once in seen_run_cats
         self.assertEqual(len(seen_run_cats), len(set(seen_run_cats)), f"Categories not grouped by [Run, Category]: {seen_run_cats}")
 
-    def test_tool_configure_planning_schedule(self):
+    def test_tool_save_schedule_and_batch_cook(self):
         tools_map = {t.__name__: t for t in get_agent_tools(data_dir=self.test_dir)}
-        # Onboard first
-        tools_map["tool_onboard_user"]("Europe/Brussels", 65.0, "lean_bulk", 2550.0, 2.3, 1.0, week_start_day="Saturday", weeks_ahead=1)
+        # Save planning schedule preference in long-term memory
+        res = tools_map["tool_save_memory_note"]("Planning schedule: Week starts on Monday, planning 2 weeks ahead", "long_term")
+        self.assertIn("Saved to long-term memory", res)
 
-        # Configure schedule to Monday start and 2 weeks ahead
-        res = tools_map["tool_configure_planning_schedule"](week_start_day="Monday", weeks_ahead=2)
-        self.assertIn("Week starts on Monday", res)
-        self.assertIn("planning 2 week(s) ahead", res)
+        # Update batch cook instructions
+        update_res = tools_map["tool_update_batch_cook"]([
+            {
+                "Dish": "Thịt Kho Tàu",
+                "Ingredient": "1000g Pork Belly; 6 Eggs",
+                "Grocery_Run": "Saturday",
+                "Prep_Day": "Sunday",
+                "Days_Served": "Monday, Tuesday, Wednesday"
+            }
+        ])
+        self.assertIn("Successfully updated batch cook instructions", update_res)
 
-        # View batch cook list tool
-        batch_summary = tools_map["tool_view_batch_cook_list"]()
-        self.assertIn("Dish,Ingredient,Grocery_Run,Prep_Day,Days_Served", batch_summary)
+        # View batch cook list
+        batch_summary = tools_map["tool_get_batch_cook"]()
+        self.assertIn("Thịt Kho Tàu", batch_summary)
+        self.assertIn("Sunday", batch_summary)
