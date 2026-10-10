@@ -17,9 +17,11 @@ def get_model_name() -> str:
     return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
 def ensure_api_key(input_fn=input) -> str:
-    """Checks for GEMINI_API_KEY, prompts the user if missing, and optionally persists to .env."""
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    """Checks for GEMINI_API_KEY or GOOGLE_API_KEY, prompts the user if missing, and optionally persists to .env."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
     if key:
+        os.environ["GEMINI_API_KEY"] = key
+        os.environ["GOOGLE_API_KEY"] = key
         return key
 
     print("\n[*] No GEMINI_API_KEY detected in environment or .env file.")
@@ -34,13 +36,14 @@ def ensure_api_key(input_fn=input) -> str:
         return ""
 
     os.environ["GEMINI_API_KEY"] = entered
+    os.environ["GOOGLE_API_KEY"] = entered
     try:
         save = input_fn("Save this key to .env for future sessions? (y/N): ").strip().lower()
         if save in ["y", "yes"]:
             env_path = ".env"
             with open(env_path, "a", encoding="utf-8") as f:
-                f.write(f"\nGEMINI_API_KEY={entered}\n")
-            print("[OK] GEMINI_API_KEY saved to .env file.")
+                f.write(f"\nGEMINI_API_KEY={entered}\nGOOGLE_API_KEY={entered}\n")
+            print("[OK] GEMINI_API_KEY and GOOGLE_API_KEY saved to .env file.")
     except (KeyboardInterrupt, EOFError):
         pass
 
@@ -93,13 +96,13 @@ def run_interactive_cli(data_dir: str = "data") -> None:
 
     user_tz = profile.timezone if profile else "Europe/Brussels"
 
-    # 2. Blank-slate memory hydration & weekly plan check
-    print("\n[*] Hydrating memory & bookkeeping files from blank slate...")
+    # 2. Blank-slate memory hydration & weekly plan check (only relevant files)
+    print("\n[*] Hydrating relevant context files from blank slate...")
     mem_mgr = MemoryManager(data_dir)
-    records, total_ms = mem_mgr.hydrate()
+    records, total_ms = mem_mgr.hydrate(user_timezone=user_tz)
     for label, path, elapsed_ms in records:
         print(f"  - [Loaded] {label}: {path} ({elapsed_ms:.2f} ms)")
-    print(f"[OK] Memory & artifacts hydrated in {total_ms:.2f} ms.")
+    print(f"[OK] Relevant context hydrated in {total_ms:.2f} ms.")
 
     if profile:
         plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
@@ -219,5 +222,94 @@ def run_interactive_cli(data_dir: str = "data") -> None:
             print("\nSession ended.")
             break
 
+def serve_adk_playground(
+    port: int = 8080,
+    host: str = "127.0.0.1",
+    data_dir: str = "data"
+) -> None:
+    """Starts the Google ADK playground web server for interactive multimodal chat."""
+    print("=" * 70)
+    print("  === AI Meal & Grocery Planner Agent (Google ADK Playground) ===")
+    print("=" * 70)
+
+    # 1. API key verification
+    ensure_api_key()
+
+    # 2. Check profile or onboard
+    profile = load_user_profile(data_dir)
+    tools = get_agent_tools(data_dir)
+    tools_map = {t.__name__: t for t in tools}
+
+    if not profile:
+        print("\n[Welcome] No athlete profile found. Let's do a quick onboarding setup.")
+        try:
+            tz_input = input("Enter your timezone (e.g. Europe/Brussels, UTC+2, America/New_York) [Europe/Brussels]: ").strip()
+            tz_name = tz_input if tz_input else "Europe/Brussels"
+
+            bw_input = input("Enter your current bodyweight in kg [65]: ").strip()
+            bw = float(bw_input) if bw_input else 65.0
+
+            goal = input("Enter your goal state (lean_bulk / cut / maintenance) [lean_bulk]: ").strip()
+            goal = goal if goal else "lean_bulk"
+
+            cal_input = input("Enter target daily calories (or press enter for default ~2550) [2550]: ").strip()
+            target_kcal = float(cal_input) if cal_input else 2550.0
+
+            prot_mult = input("Enter protein multiplier g/kg [2.3]: ").strip()
+            p_mult = float(prot_mult) if prot_mult else 2.3
+
+            fat_mult = input("Enter fat multiplier g/kg [1.0]: ").strip()
+            f_mult = float(fat_mult) if fat_mult else 1.0
+
+            print("\n[Setup] Initializing your profile and local bookkeeping files...")
+            init_msg = tools_map["tool_onboard_user"](tz_name, bw, goal, target_kcal, p_mult, f_mult)
+            print(f"[OK] {init_msg}")
+
+            print("\n[Plan] Generating your initial weekly meal plan and split grocery list...")
+            plan_msg = tools_map["tool_generate_meal_plan"]()
+            print(f"[OK] {plan_msg}")
+
+            profile = load_user_profile(data_dir)
+        except (KeyboardInterrupt, EOFError):
+            print("\nOnboarding aborted.")
+            return
+
+    user_tz = profile.timezone if profile else "Europe/Brussels"
+
+    # 3. Blank-slate memory hydration (only relevant files)
+    print("\n[*] Hydrating relevant context files from blank slate...")
+    mem_mgr = MemoryManager(data_dir)
+    records, total_ms = mem_mgr.hydrate(user_timezone=user_tz)
+    for label, path, elapsed_ms in records:
+        print(f"  - [Loaded] {label}: {path} ({elapsed_ms:.2f} ms)")
+    print(f"[OK] Relevant context hydrated in {total_ms:.2f} ms.")
+
+    if profile:
+        plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
+        if newly_created:
+            print(f"[*] Generated isolated weekly meal plan for this cycle: {plan_path}")
+        else:
+            print(f"[*] Active weekly meal plan artifact verified: {plan_path}")
+
+    url = f"http://{host}:{port}/dev-ui/?app=meal_planner"
+    print("\n" + "=" * 70)
+    print(f"[*] Launching Google ADK Playground at: {url}")
+    print("    - Chat with your Meal Planner agent in the visual playground")
+    print("    - Upload photos of grocery bills/receipts to log prices or substitutions")
+    print("    - Upload photos of meals to estimate calories/protein and adapt your plan")
+    print("=" * 70 + "\n")
+
+    import subprocess
+    cmd = [
+        sys.executable, "-m", "google.adk.cli", "web",
+        "--host", host,
+        "--port", str(port),
+        "."
+    ]
+    try:
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        print("\nADK Playground server shut down.")
+
 if __name__ == "__main__":
-    run_interactive_cli()
+    serve_adk_playground()

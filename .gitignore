@@ -9,3 +9,5 @@ data/
 dist/
 build/
 *.egg-info/
+.venv/
+.adk/

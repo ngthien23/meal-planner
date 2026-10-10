@@ -6,14 +6,22 @@ from meal_planner.cli import ensure_api_key
 class TestCliApiKey(unittest.TestCase):
     def setUp(self):
         self.orig_key = os.environ.get("GEMINI_API_KEY")
+        self.orig_google_key = os.environ.get("GOOGLE_API_KEY")
         if "GEMINI_API_KEY" in os.environ:
             del os.environ["GEMINI_API_KEY"]
+        if "GOOGLE_API_KEY" in os.environ:
+            del os.environ["GOOGLE_API_KEY"]
 
     def tearDown(self):
         if self.orig_key:
             os.environ["GEMINI_API_KEY"] = self.orig_key
         elif "GEMINI_API_KEY" in os.environ:
             del os.environ["GEMINI_API_KEY"]
+
+        if self.orig_google_key:
+            os.environ["GOOGLE_API_KEY"] = self.orig_google_key
+        elif "GOOGLE_API_KEY" in os.environ:
+            del os.environ["GOOGLE_API_KEY"]
 
     def test_ensure_api_key_existing_env(self):
         os.environ["GEMINI_API_KEY"] = "test-existing-key"

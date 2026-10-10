@@ -1,0 +1,4 @@
+name: meal-planner
+agent_directory: meal_planner
+language: python
+framework: google-adk

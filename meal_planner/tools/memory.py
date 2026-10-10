@@ -118,23 +118,22 @@ class MemoryManager:
             with open(self.weekly_path, "w", encoding="utf-8") as f:
                 json.dump([], f)
 
-    def hydrate(self) -> tuple[list[tuple[str, str, float]], float]:
-        """Loads all memory files from disk, benchmarking the latency for each."""
-        targets = [
-            ("Profile", os.path.join(self.data_dir, "profile.json")),
-            ("Weekly Memory", self.weekly_path),
-            ("Long-term Memory", self.long_term_path),
-            ("Pantry Inventory", os.path.join(self.data_dir, "pantry.json"))
-        ]
+    def hydrate(self, user_timezone: str = "Europe/Brussels") -> tuple[list[tuple[str, str, float]], float]:
+        """Loads only relevant context files (preferences, current week meal plan, memory) from disk, benchmarking latency."""
+        from meal_planner.tools.meal_generator import get_current_cycle_prefix
+        prefix = get_current_cycle_prefix(user_timezone)
+        current_plan_csv = os.path.join(self.data_dir, "plans", f"{prefix}_meal_plan.csv")
+        if not os.path.exists(current_plan_csv):
+            root_plan = os.path.join(self.data_dir, "meal_plan.csv")
+            if os.path.exists(root_plan):
+                current_plan_csv = root_plan
 
-        # Also check for active meal plan CSV
-        plans_dir = os.path.join(self.data_dir, "plans")
-        if os.path.exists(plans_dir):
-            csvs = sorted([f for f in os.listdir(plans_dir) if f.endswith("_meal_plan.csv")])
-            if csvs:
-                targets.append(("Active Weekly Plan", os.path.join(plans_dir, csvs[-1])))
-        elif os.path.exists(os.path.join(self.data_dir, "meal_plan.csv")):
-            targets.append(("Active Weekly Plan", os.path.join(self.data_dir, "meal_plan.csv")))
+        targets = [
+            ("Athlete Preferences", os.path.join(self.data_dir, "profile.json")),
+            ("Current Week Meal Plan", current_plan_csv),
+            ("Active Weekly Memory", self.weekly_path),
+            ("Durable Long-term Facts", self.long_term_path),
+        ]
 
         records = []
         t_start_total = time.perf_counter()

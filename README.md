@@ -1,32 +1,34 @@
 # AI Meal & Grocery Planner Agent
 
-An intelligent, macro-accurate, and zero-waste dietary, memory, and financial planner designed for strength athletes and powerlifters. Built with **Google ADK (Agent Development Kit)** and powered by **Google Gemini** (`gemini-3.8-flash`) using your `GEMINI_API_KEY`.
+An intelligent, macro-accurate, vision-enabled, and zero-waste dietary, memory, and financial planner designed for strength athletes and powerlifters. Built with **Google ADK (Agent Development Kit)** and powered by **Google Gemini** (`gemini-3.8-flash`) using your `GEMINI_API_KEY`.
 
 ---
 
 ## 🌟 Key Features
 
-1. **Interactive Onboarding & Timezone Awareness (Module 1):**
-   - On first launch, the agent walks you through an onboarding setup to gather your timezone (e.g. `Europe/Brussels`), current bodyweight, goal state, calorie targets, and dietary restrictions.
-   - Anchors all temporal queries (`"today"`, `"tonight"`, `"tomorrow's lunch"`, `"Thursday night"`) to your real-time clock.
-   - Strictly enforces texture and fatigue rules: **soft, liquid, or broth-based meals for breakfast and dinner** (smoothies, Phở), and **solid, batch-cooked meals for lunch** (Gà xào sả ớt, Thịt kho).
-   - Enforces ingredient rules: Fortified soy milk only (no dairy), Optimum Nutrition whey only, canned tuna only.
+1. **Google ADK Playground & Multimodal Vision Support:**
+   - Runs directly in the **Google ADK Playground** web UI (`http://127.0.0.1:8080/dev-ui/?app=meal_planner`).
+   - **Grocery Bills / Receipts:** Upload photos of your store bills (Colruyt, Delhaize, etc.). The agent extracts line items and unit prices for protein sources and staples, automatically invoking price-tracking tools and logging spend.
+   - **Meal Photos:** Upload photos of what you ate. The agent visually estimates calories and protein based on portion sizes, matches or adapts against your daily plan, rebalances macros, and flags unused perishable meat to roll over or freeze.
 
-2. **Two-Tier Memory System with Noise Discrimination:**
+2. **Relevant Information Startup Hydration:**
+   - When a conversation starts, only relevant context files are loaded:
+     - **Athlete Preferences (`data/profile.json`):** Bodyweight, target calories, macro multipliers, and dietary bans.
+     - **Current Week Meal Plan (`data/plans/YYMMDD_meal_plan.csv`):** The isolated active weekly plan for the current cycle.
+     - **Active Weekly Memory (`data/memory/weekly.json`) & Durable Facts (`data/memory/long_term.json`)**.
+   - Benchmarks disk loading with microsecond resolution (`X.X ms`) without loading unrelated pantry inventories or past weeks' logs.
+
+3. **Two-Tier Memory System with Noise Discrimination:**
    - **Short-Term (Weekly) Memory (`data/memory/weekly.json`):** Tracks temporary physical fatigue (e.g., lower back tightness), schedule shifts, and perishable meat roll-overs for the active cycle.
    - **Long-Term (Monthly/Yearly) Memory (`data/memory/long_term.json`):** Durable athlete facts, permanent intolerances, and macro milestones that persist across conversations.
    - **Relevance Filter:** Rejects pleasantries and trivial chatter (`"ok"`, `"thanks"`, `"sounds good"`, greetings) to prevent memory pollution.
 
-3. **Dated Weekly Plan Artifacts (`YYMMDD` Isolated Files):**
+4. **Dated Weekly Plan Artifacts (`YYMMDD` Isolated Files):**
    - Saves active weekly schedules to isolated files named with the Saturday cycle start date: `data/plans/YYMMDD_meal_plan.csv` and `data/plans/YYMMDD_grocery_list.csv` (e.g., `data/plans/261010_meal_plan.csv`).
    - Keeps your weekly reading isolated and clean so you are not overwhelmed by historical weeks.
    - Automatically checks for an existing cycle file before generating a new one.
 
-4. **Transparent Blank-Slate Startup Hydration:**
-   - Each session starts from a clean slate and benchmarks loading every state file from disk.
-   - Prints benchmarked hydration latency with millisecond precision (`X.X ms`) before the prompt opens.
-
-5. **Concise, Artifact-Pointing Conversational Style:**
+5. **Concise, Artifact-Pointing Conversational Persona:**
    - When asked about your schedule or grocery list (e.g., *"what is my schedule for this week?"*), the agent points directly to the active artifact path.
    - Tabular meal rows and full CSV contents are only printed in chat upon explicit request (e.g. *"print the plan in chat"*).
 
@@ -67,7 +69,7 @@ Install project dependencies:
 ```bash
 pip install -e .
 ```
-*(Or install directly: `pip install google-genai python-dotenv tzdata`)*
+*(Or install directly: `pip install google-genai google-adk python-dotenv tzdata`)*
 
 ### 3. Configure Gemini API Key
 You can set your Gemini API key in multiple ways:
@@ -78,35 +80,38 @@ You can set your Gemini API key in multiple ways:
   $env:GEMINI_API_KEY="your_gemini_api_key_here"
   ```
 
-### 4. Run the Agent
-Start the interactive terminal CLI:
+### 4. Serve the Agent in Google ADK Playground
+Launch the ADK Playground web server:
 ```bash
 python main.py
 ```
+*(Or run `agents-cli playground`)*
 
-On startup, you will see the benchmarked blank-slate hydration log:
+On startup, you will see the benchmarked hydration log for relevant files:
 ```
-[*] Hydrating memory & bookkeeping files from blank slate...
-  - [Loaded] Profile: data\profile.json (0.24 ms)
-  - [Loaded] Weekly Memory: data\memory\weekly.json (0.12 ms)
-  - [Loaded] Long-term Memory: data\memory\long_term.json (0.15 ms)
-  - [Loaded] Pantry Inventory: data\pantry.json (0.18 ms)
-  - [Loaded] Active Weekly Plan: data\plans\261010_meal_plan.csv (0.42 ms)
-[OK] Memory & artifacts hydrated in 1.11 ms.
+[*] Hydrating relevant context files from blank slate...
+  - [Loaded] Athlete Preferences: data\profile.json (0.24 ms)
+  - [Loaded] Current Week Meal Plan: data\plans\261010_meal_plan.csv (0.35 ms)
+  - [Loaded] Active Weekly Memory: data\memory\weekly.json (0.12 ms)
+  - [Loaded] Durable Long-term Facts: data\memory\long_term.json (0.15 ms)
+[OK] Relevant context hydrated in 0.86 ms.
 [*] Active weekly meal plan artifact verified: data\plans\261010_meal_plan.csv
-[AI] Gemini Agent (gemini-3.8-flash) is active and ready!
+
+======================================================================
+[*] Launching Google ADK Playground at: http://127.0.0.1:8080/dev-ui/?app=meal_planner
+    - Chat with your Meal Planner agent in the visual playground
+    - Upload photos of grocery bills/receipts to log prices or substitutions
+    - Upload photos of meals to estimate calories/protein and adapt your plan
+======================================================================
 ```
 
----
+Open your browser to `http://127.0.0.1:8080/dev-ui/?app=meal_planner` to interact with the agent and upload photos!
 
-## 💬 Interactive CLI Commands
-
-In addition to open natural language conversation, the CLI supports fast shortcut commands:
-- `/plan`: Re-generate or view active weekly plan files
-- `/groceries`: View current split grocery list (Saturday / Wednesday / Pantry)
-- `/analytics`: View protein spend and adherence summary
-- `/memory`: Inspect active short-term (weekly) and long-term memory notes
-- `/exit`: Exit the session
+### 5. Alternative: Terminal CLI Mode
+If you prefer the terminal text interface, run:
+```bash
+python main.py --cli
+```
 
 ---
 
@@ -129,14 +134,16 @@ All persistent state is stored in clean, human-readable CSV and JSON files in th
 
 ## 🧪 Running Tests
 
-The test suite runs with standard library `unittest` and requires no extra test runner:
+The test suite runs with standard library `unittest`:
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
-All **31 tests** pass with 100% coverage across:
+All **35 tests** pass with 100% coverage across:
+- ADK playground `root_agent` instantiation and discovery
+- Multimodal bill/receipt and meal photo instruction injection
+- Relevant-only startup hydration benchmarking
 - Macro & raw-weight solvers
 - Texture & zero-waste packaging constraints
 - Food safety 72h fridge meat limits & split grocery logistics
-- Two-tier memory discrimination & hydration benchmarks
-- Dated `YYMMDD` weekly artifact isolation
+- Two-tier memory discrimination & dated `YYMMDD` weekly artifact isolation
 - Dynamic deviations & price substitutions

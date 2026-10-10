@@ -35,7 +35,7 @@ from meal_planner.tools.meal_generator import (
     get_current_cycle_prefix
 )
 
-def build_system_instruction(user_timezone: str = "UTC", data_dir: str = "data") -> str:
+def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: str = "data") -> str:
     """Builds the system instruction prompt for the Gemini meal planner agent."""
     tz = resolve_timezone(user_timezone)
     now_local = datetime.now(tz)
@@ -52,7 +52,17 @@ def build_system_instruction(user_timezone: str = "UTC", data_dir: str = "data")
     active_plan_csv = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
     active_grocery_csv = os.path.join(data_dir, "plans", f"{prefix}_grocery_list.csv")
 
-    return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, and financial assistant for a powerlifting athlete.
+    profile = load_user_profile(data_dir)
+    if profile:
+        profile_summary = (
+            f"- Bodyweight: {profile.bodyweight_kg:.1f} kg | Goal: {profile.goal_state} | Target Calories: {profile.target_calories:.0f} kcal\n"
+            f"- Daily Target Macros: Protein {profile.protein_multiplier * profile.bodyweight_kg:.1f}g ({profile.protein_multiplier:.1f}g/kg), "
+            f"Fat {profile.fat_multiplier * profile.bodyweight_kg:.1f}g ({profile.fat_multiplier:.1f}g/kg)"
+        )
+    else:
+        profile_summary = "- Profile not yet onboarded. Prompt user to onboard if requested."
+
+    return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant for a powerlifting athlete.
 
 CURRENT TEMPORAL & ARTIFACT CONTEXT:
 - Local Time: {now_str} ({weekday_str})
@@ -61,6 +71,9 @@ CURRENT TEMPORAL & ARTIFACT CONTEXT:
 - Current Weekly Meal Plan Artifact: {active_plan_csv}
 - Current Weekly Grocery List Artifact: {active_grocery_csv}
 Always interpret relative temporal expressions ("today", "tonight", "tomorrow's lunch", "Thursday dinner") using this current local clock.
+
+ATHLETE PREFERENCES:
+{profile_summary}
 
 ATHLETE MEMORY:
 * Short-Term (Weekly):
@@ -81,6 +94,22 @@ CONVERSATION & COMMUNICATION POLICY (STRICT):
      - Use tier='weekly' for temporary physical fatigue, temporary schedule shifts, or perishable roll-overs.
      - Use tier='long_term' for permanent food intolerances, durable recipe preferences, or macro milestones.
      - NEVER record trivial conversational chatter (e.g. "ok", "thank you", "sounds good", "hello").
+
+MULTIMODAL PHOTO HANDLING (BILLS & MEALS):
+1. GROCERY BILLS / RECEIPT PHOTOS:
+   - When the user uploads a photo of a store bill or receipt:
+     - Detect the store name (e.g. Colruyt, Delhaize, Albert Heijn) and date.
+     - Extract prices for athlete protein and staple ingredients (chicken breast, pork shoulder, flank steak, eggs, shrimp, soy milk, rice).
+     - Calculate unit price (€/kg or €/unit).
+     - Invoke `tool_log_price_update(ingredient_id, price_eur, store)` for matched items.
+     - If the user bought a substitution, call `tool_substitute_ingredient`.
+     - Respond concisely with the prices logged and updated spend totals.
+2. MEAL CONSUMPTION PHOTOS:
+   - When the user uploads a photo of a meal, plate, or shake:
+     - Identify the ingredients and estimate the protein (g) and calorie content from portion sizes.
+     - Correlate with today's scheduled meal slot (breakfast, lunch, or dinner).
+     - If it deviates from the scheduled meal (e.g. restaurant food, drinking a shake instead of cooking, extra portions), call `tool_report_meal_deviation(day, meal, actual_recipe_name, protein_consumed_g, calories_consumed)`.
+     - Confirm that macros were rebalanced and state any perishable meats flagged to roll over or freeze.
 
 CORE ATHLETE RULES:
 1. Texture Rules: Breakfast & Dinner strictly soft, liquid, or broth-based (smoothies, Phở); Lunch strictly solid batch (Thịt kho, Gà xào sả ớt).
@@ -268,3 +297,30 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         tool_get_analytics,
         tool_view_grocery_list
     ]
+
+def get_root_agent(data_dir: str = "data"):
+    """Instantiates the Google ADK Agent for the Meal Planner."""
+    try:
+        from google.adk import Agent
+    except ImportError:
+        return None
+
+    model_name = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+    profile = load_user_profile(data_dir)
+    user_tz = profile.timezone if profile else "Europe/Brussels"
+    tools = get_agent_tools(data_dir)
+
+    def dynamic_instruction(ctx=None) -> str:
+        p = load_user_profile(data_dir)
+        tz_name = p.timezone if p else user_tz
+        return build_system_instruction(tz_name, data_dir=data_dir)
+
+    return Agent(
+        name="meal_planner",
+        model=model_name,
+        description="AI Meal & Grocery Planner Agent with multimodal receipt and meal analysis for powerlifting athlete.",
+        instruction=dynamic_instruction,
+        tools=tools,
+    )
+
+root_agent = get_root_agent("data")
