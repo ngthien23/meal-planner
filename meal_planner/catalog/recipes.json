@@ -1,0 +1,95 @@
+{
+  "whey_soy_smoothie": {
+    "id": "whey_soy_smoothie",
+    "name": "ON Whey Soy Shake",
+    "meal_type": "breakfast",
+    "texture": "liquid",
+    "prep_type": "fresh_quick",
+    "base_ingredients": [
+      {"id": "on_whey", "raw_weight_g": 35.0},
+      {"id": "fortified_soy_milk", "raw_weight_g": 350.0}
+    ],
+    "description": "Smooth high-protein shake with Optimum Nutrition Whey and calcium-fortified soy milk."
+  },
+  "avocado_soy_shake": {
+    "id": "avocado_soy_shake",
+    "name": "Avocado Protein Smoothie",
+    "meal_type": "breakfast",
+    "texture": "liquid",
+    "prep_type": "fresh_quick",
+    "base_ingredients": [
+      {"id": "on_whey", "raw_weight_g": 35.0},
+      {"id": "boni_avocado_chunks", "raw_weight_g": 75.0},
+      {"id": "fortified_soy_milk", "raw_weight_g": 300.0}
+    ],
+    "description": "Creamy avocado smoothie with ON whey and fortified soy milk for healthy fats."
+  },
+  "thit_kho_tau": {
+    "id": "thit_kho_tau",
+    "name": "Thịt Kho Tàu (Caramelized Pork & Eggs)",
+    "meal_type": "lunch",
+    "texture": "solid",
+    "prep_type": "batch_reheatable",
+    "protein_ingredient_id": "pork_shoulder",
+    "base_ingredients": [
+      {"id": "pork_shoulder", "raw_weight_g": 200.0},
+      {"id": "eggs", "raw_weight_g": 110.0},
+      {"id": "jasmine_rice", "raw_weight_g": 120.0}
+    ],
+    "description": "Savory Vietnamese caramelized braised pork shoulder with hard-boiled eggs and steamed jasmine rice."
+  },
+  "ga_xao_sa_ot": {
+    "id": "ga_xao_sa_ot",
+    "name": "Gà Xào Sả Ớt (Lemongrass Chili Chicken)",
+    "meal_type": "lunch",
+    "texture": "solid",
+    "prep_type": "batch_reheatable",
+    "protein_ingredient_id": "chicken_breast",
+    "base_ingredients": [
+      {"id": "chicken_breast", "raw_weight_g": 220.0},
+      {"id": "jasmine_rice", "raw_weight_g": 120.0},
+      {"id": "cooking_oil", "raw_weight_g": 10.0}
+    ],
+    "description": "Fragrant stir-fried chicken breast with lemongrass, chili, and garlic served with steamed jasmine rice."
+  },
+  "ga_xao_sa_ot_fresh": {
+    "id": "ga_xao_sa_ot_fresh",
+    "name": "Gà Xào Sả Ớt Fresh (Lemongrass Chili Chicken)",
+    "meal_type": "lunch",
+    "texture": "solid",
+    "prep_type": "fresh_quick",
+    "protein_ingredient_id": "chicken_breast",
+    "base_ingredients": [
+      {"id": "chicken_breast", "raw_weight_g": 220.0},
+      {"id": "jasmine_rice", "raw_weight_g": 120.0},
+      {"id": "cooking_oil", "raw_weight_g": 10.0}
+    ],
+    "description": "Freshly cooked savory lemongrass chicken with steamed jasmine rice for weekend lunch."
+  },
+  "pho_beef": {
+    "id": "pho_beef",
+    "name": "Phở Bò Tái (Thinly Sliced Beef Pho)",
+    "meal_type": "dinner",
+    "texture": "broth",
+    "prep_type": "fresh_quick",
+    "protein_ingredient_id": "lean_beef",
+    "base_ingredients": [
+      {"id": "lean_beef", "raw_weight_g": 200.0},
+      {"id": "dry_pho_noodles", "raw_weight_g": 110.0}
+    ],
+    "description": "Hot savory Vietnamese beef pho broth over tender thinly sliced lean beef and dry pho rice noodles."
+  },
+  "pho_shrimp": {
+    "id": "pho_shrimp",
+    "name": "Phở Tôm (Poached Shrimp Pho)",
+    "meal_type": "dinner",
+    "texture": "broth",
+    "prep_type": "fresh_quick",
+    "protein_ingredient_id": "frozen_shrimp",
+    "base_ingredients": [
+      {"id": "frozen_shrimp", "raw_weight_g": 250.0},
+      {"id": "dry_pho_noodles", "raw_weight_g": 110.0}
+    ],
+    "description": "Light, savory hot broth with sweet poached black tiger shrimp and dry pho rice noodles."
+  }
+}
