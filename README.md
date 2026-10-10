@@ -81,18 +81,37 @@ On first run (or via `meals --setup`), an interactive **Quick Setup Wizard** wal
 - Python 3.10+ (tested on Python 3.13)
 - Gemini API key (`GEMINI_API_KEY`)
 
-### 2. Installation
+### 2. Quick One-Command Setup
+Clone the repository and run the setup script:
+
 ```bash
 git clone https://github.com/your-username/meal-planner.git
 cd meal-planner
+```
+
+**PowerShell:**
+```powershell
+.\setup.ps1
+```
+
+**Windows Command Prompt:**
+```bat
+setup.bat
+```
+
+**Or using uv / pip:**
+```bash
+uv pip install -e .
+# or
 pip install -e .
 ```
 
 ### 3. Launch
+Once set up, run:
 ```bash
 meals
 ```
-*(Or `python main.py`)*
+*(In PowerShell without running setup first, run `.\meals` or `python main.py`)*
 
 On first launch, the wizard configures your preferences and generates your initial weekly plan artifacts.
 
