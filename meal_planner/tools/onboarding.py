@@ -85,6 +85,8 @@ def get_relative_datetime(
     target_dt = now + timedelta(days=days_offset)
     return target_dt, meal_type
 
+from dataclasses import fields
+
 def init_user_profile(data_dir: str, profile_data: dict) -> UserProfile:
     """Initializes and persists UserProfile to profile.json."""
     os.makedirs(data_dir, exist_ok=True)
@@ -105,7 +107,9 @@ def init_user_profile(data_dir: str, profile_data: dict) -> UserProfile:
             "lunch": "solid_batch",
             "dinner": "broth_or_soft"
         }),
-        batch_prep_days=profile_data.get("batch_prep_days", ["Sunday", "Wednesday"])
+        batch_prep_days=profile_data.get("batch_prep_days", ["Sunday", "Wednesday"]),
+        week_start_day=profile_data.get("week_start_day", "Saturday"),
+        weeks_ahead=int(profile_data.get("weeks_ahead", 1))
     )
     profile_path = os.path.join(data_dir, "profile.json")
     with open(profile_path, "w", encoding="utf-8") as f:
@@ -119,4 +123,5 @@ def load_user_profile(data_dir: str) -> Optional[UserProfile]:
         return None
     with open(profile_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return UserProfile(**data)
+    valid_data = {k: v for k, v in data.items() if k in {f.name for f in fields(UserProfile)}}
+    return UserProfile(**valid_data)

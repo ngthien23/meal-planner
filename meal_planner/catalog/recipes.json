@@ -7,9 +7,10 @@
     "prep_type": "fresh_quick",
     "base_ingredients": [
       {"id": "on_whey", "raw_weight_g": 35.0},
-      {"id": "fortified_soy_milk", "raw_weight_g": 350.0}
+      {"id": "fortified_soy_milk", "raw_weight_g": 350.0},
+      {"id": "mixed_berries", "raw_weight_g": 50.0}
     ],
-    "description": "Smooth high-protein shake with Optimum Nutrition Whey and calcium-fortified soy milk."
+    "description": "Smooth high-protein shake with Optimum Nutrition Whey, calcium-fortified soy milk, and antioxidant berries."
   },
   "avocado_soy_shake": {
     "id": "avocado_soy_shake",
@@ -34,9 +35,10 @@
     "base_ingredients": [
       {"id": "pork_shoulder", "raw_weight_g": 200.0},
       {"id": "eggs", "raw_weight_g": 110.0},
-      {"id": "jasmine_rice", "raw_weight_g": 120.0}
+      {"id": "jasmine_rice", "raw_weight_g": 120.0},
+      {"id": "bok_choy", "raw_weight_g": 100.0}
     ],
-    "description": "Savory Vietnamese caramelized braised pork shoulder with hard-boiled eggs and steamed jasmine rice."
+    "description": "Savory Vietnamese caramelized braised pork shoulder with hard-boiled eggs, bok choy, and steamed jasmine rice."
   },
   "ga_xao_sa_ot": {
     "id": "ga_xao_sa_ot",
@@ -48,9 +50,10 @@
     "base_ingredients": [
       {"id": "chicken_breast", "raw_weight_g": 220.0},
       {"id": "jasmine_rice", "raw_weight_g": 120.0},
-      {"id": "cooking_oil", "raw_weight_g": 10.0}
+      {"id": "cooking_oil", "raw_weight_g": 10.0},
+      {"id": "broccoli", "raw_weight_g": 80.0}
     ],
-    "description": "Fragrant stir-fried chicken breast with lemongrass, chili, and garlic served with steamed jasmine rice."
+    "description": "Fragrant stir-fried chicken breast with lemongrass, chili, broccoli, and steamed jasmine rice."
   },
   "ga_xao_sa_ot_fresh": {
     "id": "ga_xao_sa_ot_fresh",
@@ -62,9 +65,10 @@
     "base_ingredients": [
       {"id": "chicken_breast", "raw_weight_g": 220.0},
       {"id": "jasmine_rice", "raw_weight_g": 120.0},
-      {"id": "cooking_oil", "raw_weight_g": 10.0}
+      {"id": "cooking_oil", "raw_weight_g": 10.0},
+      {"id": "broccoli", "raw_weight_g": 80.0}
     ],
-    "description": "Freshly cooked savory lemongrass chicken with steamed jasmine rice for weekend lunch."
+    "description": "Freshly cooked savory lemongrass chicken with steamed jasmine rice and broccoli for weekend lunch."
   },
   "pho_beef": {
     "id": "pho_beef",
@@ -75,9 +79,11 @@
     "protein_ingredient_id": "lean_beef",
     "base_ingredients": [
       {"id": "lean_beef", "raw_weight_g": 200.0},
-      {"id": "dry_pho_noodles", "raw_weight_g": 110.0}
+      {"id": "dry_pho_noodles", "raw_weight_g": 110.0},
+      {"id": "bok_choy", "raw_weight_g": 70.0},
+      {"id": "scallions_cilantro", "raw_weight_g": 30.0}
     ],
-    "description": "Hot savory Vietnamese beef pho broth over tender thinly sliced lean beef and dry pho rice noodles."
+    "description": "Hot savory Vietnamese beef pho broth over tender thinly sliced lean beef, dry pho rice noodles, and fresh greens."
   },
   "pho_shrimp": {
     "id": "pho_shrimp",
@@ -88,8 +94,10 @@
     "protein_ingredient_id": "frozen_shrimp",
     "base_ingredients": [
       {"id": "frozen_shrimp", "raw_weight_g": 250.0},
-      {"id": "dry_pho_noodles", "raw_weight_g": 110.0}
+      {"id": "dry_pho_noodles", "raw_weight_g": 110.0},
+      {"id": "bok_choy", "raw_weight_g": 70.0},
+      {"id": "scallions_cilantro", "raw_weight_g": 30.0}
     ],
-    "description": "Light, savory hot broth with sweet poached black tiger shrimp and dry pho rice noodles."
+    "description": "Light, savory hot broth with sweet poached black tiger shrimp, dry pho rice noodles, and fresh greens."
   }
 }

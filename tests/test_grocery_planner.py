@@ -43,6 +43,9 @@ class TestGroceryPlanner(unittest.TestCase):
             reader = csv.DictReader(f)
             rows = list(reader)
             self.assertGreater(len(rows), 0)
-            self.assertTrue(any(r["Run"] == "Saturday Run" for r in rows))
-            self.assertTrue(any(r["Run"] == "Wednesday Run" for r in rows))
+            self.assertTrue(any(r["Run"] == "Saturday" for r in rows))
+            self.assertTrue(any(r["Run"] == "Wednesday" for r in rows))
+            for r in rows:
+                self.assertNotIn(".", r["Package_Size"])
+                self.assertNotIn(".", r["Quantity"].split(" ")[1]) # e.g. "(580g"
         os.remove(csv_path)

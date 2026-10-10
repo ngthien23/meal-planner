@@ -95,7 +95,7 @@
   "boni_avocado_chunks": {
     "id": "boni_avocado_chunks",
     "name": "Colruyt Boni Frozen Avocado Chunks",
-    "category": "produce_frozen",
+    "category": "fruit",
     "protein_per_100g": 2.0,
     "fat_per_100g": 15.0,
     "carbs_per_100g": 2.0,
@@ -158,5 +158,57 @@
     "perishable": false,
     "unit_type": "per_bottle",
     "reorder_threshold_g": 200.0
+  },
+  "bok_choy": {
+    "id": "bok_choy",
+    "name": "Fresh Bok Choy",
+    "category": "vegetable",
+    "protein_per_100g": 1.5,
+    "fat_per_100g": 0.2,
+    "carbs_per_100g": 2.2,
+    "calories_per_100g": 13.0,
+    "package_size_g": 500.0,
+    "unit_price_eur": 1.99,
+    "perishable": true,
+    "unit_type": "per_pack"
+  },
+  "scallions_cilantro": {
+    "id": "scallions_cilantro",
+    "name": "Fresh Scallions & Herbs",
+    "category": "vegetable",
+    "protein_per_100g": 1.8,
+    "fat_per_100g": 0.2,
+    "carbs_per_100g": 3.5,
+    "calories_per_100g": 23.0,
+    "package_size_g": 100.0,
+    "unit_price_eur": 0.99,
+    "perishable": true,
+    "unit_type": "per_bunch"
+  },
+  "broccoli": {
+    "id": "broccoli",
+    "name": "Fresh Broccoli",
+    "category": "vegetable",
+    "protein_per_100g": 2.8,
+    "fat_per_100g": 0.4,
+    "carbs_per_100g": 6.6,
+    "calories_per_100g": 34.0,
+    "package_size_g": 500.0,
+    "unit_price_eur": 1.49,
+    "perishable": true,
+    "unit_type": "per_pack"
+  },
+  "mixed_berries": {
+    "id": "mixed_berries",
+    "name": "Frozen Mixed Berries",
+    "category": "fruit",
+    "protein_per_100g": 1.0,
+    "fat_per_100g": 0.5,
+    "carbs_per_100g": 12.0,
+    "calories_per_100g": 55.0,
+    "package_size_g": 500.0,
+    "unit_price_eur": 2.49,
+    "perishable": true,
+    "unit_type": "per_bag"
   }
 }

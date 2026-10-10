@@ -97,16 +97,16 @@ def generate_split_groceries(
                 "id": ing_id,
                 "name": ing.name,
                 "category": ing.category,
-                "needed_g": round(needed_g, 1),
+                "needed_g": int(round(needed_g)),
                 "packages": num_pkgs,
-                "package_size": f"{pkg_size:.0f}g",
+                "package_size": f"{int(round(pkg_size))}g",
                 "estimated_price_eur": est_cost,
                 "storage_note": storage_note
             })
         return items
 
-    saturday_items = _build_run_items(sat_usage, "Saturday Run")
-    wednesday_items = _build_run_items(wed_usage, "Wednesday Run")
+    saturday_items = _build_run_items(sat_usage, "Saturday")
+    wednesday_items = _build_run_items(wed_usage, "Wednesday")
 
     # Pantry restock check across ALL non-perishable catalog pantry items
     restock_items = []
@@ -121,14 +121,14 @@ def generate_split_groceries(
         if remaining_stock <= threshold:
             pkg_size = ing.package_size_g if ing.package_size_g > 0 else 1000.0
             restock_items.append({
-                "run": "Pantry Restock",
+                "run": "Pantry",
                 "id": ing_id,
                 "name": ing.name,
                 "category": ing.category,
-                "current_stock_g": round(current_stock, 1),
-                "needed_g": round(planned_g, 1),
+                "current_stock_g": int(round(current_stock)),
+                "needed_g": int(round(planned_g)),
                 "packages": 1,
-                "package_size": f"{pkg_size:.0f}g",
+                "package_size": f"{int(round(pkg_size))}g",
                 "estimated_price_eur": ing.unit_price_eur,
                 "storage_note": "Pantry Restock"
             })
@@ -150,11 +150,12 @@ def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str) -> No
         writer.writeheader()
         for run_items in [grocery_list.saturday_run, grocery_list.wednesday_run, grocery_list.pantry_restock]:
             for item in run_items:
+                needed_g_val = int(round(item.get("needed_g", 0)))
                 writer.writerow({
                     "Run": item["run"],
                     "Category": item["category"].capitalize(),
                     "Item": item["name"],
-                    "Quantity": f"{item['packages']}x ({item.get('needed_g', 0)}g planned)",
+                    "Quantity": f"{item['packages']}x ({needed_g_val}g planned)",
                     "Package_Size": item["package_size"],
                     "Estimated_Price_EUR": f"€{item['estimated_price_eur']:.2f}",
                     "Storage_Note": item["storage_note"]

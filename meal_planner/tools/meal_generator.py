@@ -1,5 +1,6 @@
 import csv
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 from meal_planner.models import (
@@ -13,16 +14,33 @@ from meal_planner.models import (
 )
 from meal_planner.tools.macro_calculator import calculate_daily_targets, solve_protein_raw_weight
 
+DAY_NAME_MAP = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6
+}
+
+MEAL_BY_DAY = {
+    "Saturday": ("whey_soy_smoothie", "ga_xao_sa_ot_fresh", "pho_shrimp"),
+    "Sunday": ("avocado_soy_shake", "ga_xao_sa_ot_fresh", "pho_shrimp"),
+    "Monday": ("whey_soy_smoothie", "thit_kho_tau", "pho_beef"),
+    "Tuesday": ("whey_soy_smoothie", "thit_kho_tau", "pho_beef"),
+    "Wednesday": ("avocado_soy_shake", "thit_kho_tau", "pho_beef"),
+    "Thursday": ("whey_soy_smoothie", "ga_xao_sa_ot", "pho_shrimp"),
+    "Friday": ("whey_soy_smoothie", "ga_xao_sa_ot", "pho_shrimp"),
+}
+
 def _build_meal_slot(
     recipe: Recipe,
     target_protein: float,
     ingredients_catalog: dict[str, Ingredient]
 ) -> MealSlot:
-    """Builds a MealSlot with raw ingredient weights adjusted to meet target protein."""
+    """Builds a MealSlot with raw ingredient weights adjusted to meet target protein, tracking veg and fruit macros."""
     total_p = 0.0
     total_f = 0.0
     total_c = 0.0
     total_kcal = 0.0
+    total_veg = 0.0
+    total_fruit = 0.0
     resolved_ingredients = []
 
     # Identify if recipe has a variable protein source
@@ -59,11 +77,17 @@ def _build_meal_slot(
         total_c += c
         total_kcal += kcal
 
-        label = f"{round(weight, 1)}g raw/dry {ing.name}"
+        if ing.category == "vegetable":
+            total_veg += weight
+        elif ing.category == "fruit":
+            total_fruit += weight
+
+        weight_rounded = int(round(weight))
+        label = f"{weight_rounded}g raw/dry {ing.name}"
         resolved_ingredients.append({
             "id": ing_id,
             "name": ing.name,
-            "raw_weight_g": round(weight, 1),
+            "raw_weight_g": weight_rounded,
             "label": label
         })
 
@@ -77,14 +101,16 @@ def _build_meal_slot(
         fat_g=round(total_f, 1),
         carbs_g=round(total_c, 1),
         calories=round(total_kcal, 1),
-        prep_type=recipe.prep_type
+        prep_type=recipe.prep_type,
+        veg_g=int(round(total_veg)),
+        fruit_g=int(round(total_fruit))
     )
 
 def generate_weekly_plan(
     profile: UserProfile,
     start_date: Optional[str] = None
 ) -> WeeklyPlan:
-    """Generates a 7-day Saturday-to-Friday zero-waste meal plan satisfying texture rules."""
+    """Generates a 7-day zero-waste meal plan satisfying texture rules starting on profile.week_start_day."""
     ingredients_catalog, recipes_catalog = load_catalog()
     macro_targets = calculate_daily_targets(
         profile.bodyweight_kg,
@@ -93,35 +119,28 @@ def generate_weekly_plan(
         profile.target_calories
     )
 
-    # Base reference date: next or current Saturday
+    # Base reference date: start_date if given, else current cycle start based on profile.week_start_day
     if start_date:
         base_dt = datetime.strptime(start_date, "%Y-%m-%d")
     else:
         now = datetime.now()
-        days_to_saturday = (5 - now.weekday()) % 7
-        base_dt = now + timedelta(days=days_to_saturday)
+        start_day_name = getattr(profile, "week_start_day", "Saturday")
+        start_wd = DAY_NAME_MAP.get(start_day_name.lower(), 5)
+        days_since_start = (now.weekday() - start_wd) % 7
+        base_dt = now - timedelta(days=days_since_start)
 
     # Target protein distribution: Breakfast ~25-30%, Lunch ~35%, Dinner ~35%
     p_breakfast = round(macro_targets.protein_g * 0.28, 1)
     p_lunch = round(macro_targets.protein_g * 0.36, 1)
     p_dinner = round(macro_targets.protein_g * 0.36, 1)
 
-    # 7-day template (Saturday to Friday)
-    schedule_template = [
-        # (Day name, breakfast_id, lunch_id, dinner_id)
-        ("Saturday", "whey_soy_smoothie", "ga_xao_sa_ot_fresh", "pho_shrimp"),
-        ("Sunday", "avocado_soy_shake", "ga_xao_sa_ot_fresh", "pho_shrimp"),
-        ("Monday", "whey_soy_smoothie", "thit_kho_tau", "pho_beef"),
-        ("Tuesday", "whey_soy_smoothie", "thit_kho_tau", "pho_beef"),
-        ("Wednesday", "avocado_soy_shake", "thit_kho_tau", "pho_beef"),
-        ("Thursday", "whey_soy_smoothie", "ga_xao_sa_ot", "pho_shrimp"),
-        ("Friday", "whey_soy_smoothie", "ga_xao_sa_ot", "pho_shrimp"),
-    ]
-
     days = []
-    for i, (day_name, b_id, l_id, d_id) in enumerate(schedule_template):
+    for i in range(7):
         day_dt = base_dt + timedelta(days=i)
+        day_name = day_dt.strftime("%A")
         date_str = day_dt.strftime("%Y-%m-%d")
+
+        b_id, l_id, d_id = MEAL_BY_DAY.get(day_name, ("whey_soy_smoothie", "ga_xao_sa_ot_fresh", "pho_shrimp"))
 
         b_slot = _build_meal_slot(recipes_catalog[b_id], p_breakfast, ingredients_catalog)
         l_slot = _build_meal_slot(recipes_catalog[l_id], p_lunch, ingredients_catalog)
@@ -131,6 +150,8 @@ def generate_weekly_plan(
         tot_f = round(b_slot.fat_g + l_slot.fat_g + d_slot.fat_g, 1)
         tot_c = round(b_slot.carbs_g + l_slot.carbs_g + d_slot.carbs_g, 1)
         tot_kcal = round(b_slot.calories + l_slot.calories + d_slot.calories, 1)
+        tot_veg = b_slot.veg_g + l_slot.veg_g + d_slot.veg_g
+        tot_fruit = b_slot.fruit_g + l_slot.fruit_g + d_slot.fruit_g
 
         days.append(DayPlan(
             day_name=day_name,
@@ -141,50 +162,101 @@ def generate_weekly_plan(
             total_protein_g=tot_p,
             total_fat_g=tot_f,
             total_carbs_g=tot_c,
-            total_calories=tot_kcal
+            total_calories=tot_kcal,
+            total_veg_g=tot_veg,
+            total_fruit_g=tot_fruit
         ))
 
     return WeeklyPlan(days=days, rollover_items=[])
 
 def export_meal_plan_csv(plan: WeeklyPlan, filepath: str) -> None:
-    """Exports the weekly meal plan to CSV with raw weights."""
+    """Exports the weekly meal plan to CSV with strict columns and rounded integers."""
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     fieldnames = [
-        "Day", "Date", "Meal", "Recipe", "Texture", "Prep_Type",
-        "Ingredients", "Protein_g", "Fat_g", "Carbs_g", "Calories"
+        "Date", "Meal", "Recipe", "Ingredient", "P", "C", "F", "Calories"
     ]
     with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for day in plan.days:
             for slot in [day.breakfast, day.lunch, day.dinner]:
-                ingredients_str = "; ".join(item.get("label", f"{item['raw_weight_g']}g {item['name']}") for item in slot.ingredients)
+                ingredients_str = "; ".join(item.get("label", f"{int(round(item['raw_weight_g']))}g raw {item['name']}") for item in slot.ingredients)
                 writer.writerow({
-                    "Day": day.day_name,
                     "Date": day.date_str,
                     "Meal": slot.meal_type.capitalize(),
                     "Recipe": slot.recipe_name,
-                    "Texture": slot.texture,
-                    "Prep_Type": slot.prep_type,
-                    "Ingredients": ingredients_str,
-                    "Protein_g": slot.protein_g,
-                    "Fat_g": slot.fat_g,
-                    "Carbs_g": slot.carbs_g,
-                    "Calories": slot.calories
+                    "Ingredient": ingredients_str,
+                    "P": int(round(slot.protein_g)),
+                    "C": int(round(slot.carbs_g)),
+                    "F": int(round(slot.fat_g)),
+                    "Calories": int(round(slot.calories))
                 })
+
+def export_batch_cook_csv(plan: WeeklyPlan, filepath: str) -> None:
+    """Exports a dedicated CSV showing batch-cooked dishes for the week and their grocery requirements."""
+    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+    fieldnames = [
+        "Dish", "Prep_Day", "Days_Served", "Portions", "Ingredient", "Total_Weight_g", "Grocery_Run"
+    ]
+
+    # Collect batch-cooked slots from the weekly plan
+    batch_dishes: dict[str, dict] = {}
+    for day in plan.days:
+        for slot in [day.breakfast, day.lunch, day.dinner]:
+            if slot.prep_type == "batch_reheatable":
+                recipe_name = slot.recipe_name
+                if recipe_name not in batch_dishes:
+                    prep_day = "Sunday" if "Thịt Kho" in recipe_name or "Pork" in recipe_name else "Wednesday"
+                    grocery_run = "Saturday" if prep_day == "Sunday" else "Wednesday"
+                    batch_dishes[recipe_name] = {
+                        "dish": recipe_name,
+                        "prep_day": prep_day,
+                        "days_served": [],
+                        "portions": 0,
+                        "grocery_run": grocery_run,
+                        "ingredients": {}
+                    }
+                batch_dishes[recipe_name]["days_served"].append(day.day_name)
+                batch_dishes[recipe_name]["portions"] += 1
+                for item in slot.ingredients:
+                    ing_name = item["name"]
+                    w = float(item["raw_weight_g"])
+                    batch_dishes[recipe_name]["ingredients"][ing_name] = (
+                        batch_dishes[recipe_name]["ingredients"].get(ing_name, 0.0) + w
+                    )
+
+    rows = []
+    for dish_info in batch_dishes.values():
+        days_str = ", ".join(dish_info["days_served"])
+        for ing_name, tot_w in dish_info["ingredients"].items():
+            rows.append({
+                "Dish": dish_info["dish"],
+                "Prep_Day": dish_info["prep_day"],
+                "Days_Served": days_str,
+                "Portions": dish_info["portions"],
+                "Ingredient": ing_name,
+                "Total_Weight_g": int(round(tot_w)),
+                "Grocery_Run": dish_info["grocery_run"]
+            })
+
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 def get_current_cycle_prefix(
     tz_name: str = "UTC",
-    reference_dt: Optional[datetime] = None
+    reference_dt: Optional[datetime] = None,
+    week_start_day: str = "Saturday"
 ) -> str:
-    """Calculates the YYMMDD prefix for the Saturday cycle start date."""
+    """Calculates the YYMMDD prefix for the cycle start date based on week_start_day."""
     from meal_planner.tools.onboarding import resolve_timezone
     tz = resolve_timezone(tz_name)
     now = reference_dt if reference_dt is not None else datetime.now(tz)
-    # Days since Saturday (Saturday=5, Sunday=6, Mon=0 ... Fri=4)
-    days_since_saturday = (now.weekday() - 5) % 7
-    cycle_sat = now - timedelta(days=days_since_saturday)
-    return cycle_sat.strftime("%y%m%d")
+    start_wd = DAY_NAME_MAP.get(week_start_day.lower(), 5)
+    days_since_start = (now.weekday() - start_wd) % 7
+    cycle_start = now - timedelta(days=days_since_start)
+    return cycle_start.strftime("%y%m%d")
 
 def ensure_weekly_plan_artifacts(
     profile: UserProfile,
@@ -192,7 +264,10 @@ def ensure_weekly_plan_artifacts(
     reference_dt: Optional[datetime] = None,
     force: bool = False
 ) -> tuple[str, str, bool]:
-    """Ensures isolated weekly meal plan and grocery CSVs exist for the current week, creating if missing.
+    """Ensures isolated weekly meal plan, batch cook, and grocery CSVs exist for current and future weeks.
+    
+    Generates files for the current week and next `profile.weeks_ahead` weeks (default 1).
+    Prunes any weekly files outside this active window.
     
     Returns:
         tuple[plan_path, grocery_path, newly_created]
@@ -200,31 +275,63 @@ def ensure_weekly_plan_artifacts(
     from meal_planner.tools.onboarding import resolve_timezone
     from meal_planner.tools.grocery_planner import PantryState, generate_split_groceries, export_grocery_list_csv
 
-    prefix = get_current_cycle_prefix(profile.timezone, reference_dt)
     plans_dir = os.path.join(data_dir, "plans")
     os.makedirs(plans_dir, exist_ok=True)
 
-    plan_path = os.path.join(plans_dir, f"{prefix}_meal_plan.csv")
-    grocery_path = os.path.join(plans_dir, f"{prefix}_grocery_list.csv")
-
-    if not force and os.path.exists(plan_path) and os.path.exists(grocery_path):
-        return plan_path, grocery_path, False
-
     tz = resolve_timezone(profile.timezone)
     now = reference_dt if reference_dt is not None else datetime.now(tz)
-    days_since_saturday = (now.weekday() - 5) % 7
-    cycle_sat = now - timedelta(days=days_since_saturday)
-    start_date_str = cycle_sat.strftime("%Y-%m-%d")
 
-    plan = generate_weekly_plan(profile, start_date=start_date_str)
-    export_meal_plan_csv(plan, plan_path)
+    start_day_name = getattr(profile, "week_start_day", "Saturday")
+    start_wd = DAY_NAME_MAP.get(start_day_name.lower(), 5)
+    days_since_start = (now.weekday() - start_wd) % 7
+    cycle_start = now - timedelta(days=days_since_start)
+
+    weeks_ahead = max(0, int(getattr(profile, "weeks_ahead", 1)))
+    valid_prefixes = set()
+
+    current_plan_path = None
+    current_grocery_path = None
+    any_newly_created = False
 
     pantry = PantryState.load(data_dir)
-    groceries = generate_split_groceries(plan, pantry)
-    export_grocery_list_csv(groceries, grocery_path)
 
-    # Maintain latest root references for general viewer tools
-    export_meal_plan_csv(plan, os.path.join(data_dir, "meal_plan.csv"))
-    export_grocery_list_csv(groceries, os.path.join(data_dir, "grocery_list.csv"))
+    for w in range(weeks_ahead + 1):
+        w_start_dt = cycle_start + timedelta(weeks=w)
+        prefix = w_start_dt.strftime("%y%m%d")
+        valid_prefixes.add(prefix)
 
-    return plan_path, grocery_path, True
+        plan_path = os.path.join(plans_dir, f"{prefix}_meal_plan.csv")
+        grocery_path = os.path.join(plans_dir, f"{prefix}_grocery_list.csv")
+        batch_path = os.path.join(plans_dir, f"{prefix}_batch_cook.csv")
+
+        if w == 0:
+            current_plan_path = plan_path
+            current_grocery_path = grocery_path
+
+        needs_gen = force or not (os.path.exists(plan_path) and os.path.exists(grocery_path) and os.path.exists(batch_path))
+
+        if needs_gen:
+            plan = generate_weekly_plan(profile, start_date=w_start_dt.strftime("%Y-%m-%d"))
+            export_meal_plan_csv(plan, plan_path)
+            export_batch_cook_csv(plan, batch_path)
+            groceries = generate_split_groceries(plan, pantry)
+            export_grocery_list_csv(groceries, grocery_path)
+            any_newly_created = True
+
+            if w == 0:
+                export_meal_plan_csv(plan, os.path.join(data_dir, "meal_plan.csv"))
+                export_grocery_list_csv(groceries, os.path.join(data_dir, "grocery_list.csv"))
+                export_batch_cook_csv(plan, os.path.join(data_dir, "batch_cook.csv"))
+
+    # Retention Window Pruning: remove any weekly plan files in plans_dir outside valid_prefixes
+    for filename in os.listdir(plans_dir):
+        m = re.match(r"^(\d{6})_(meal_plan|grocery_list|batch_cook)\.csv$", filename)
+        if m:
+            file_prefix = m.group(1)
+            if file_prefix not in valid_prefixes:
+                try:
+                    os.remove(os.path.join(plans_dir, filename))
+                except OSError:
+                    pass
+
+    return current_plan_path, current_grocery_path, any_newly_created

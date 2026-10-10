@@ -48,6 +48,8 @@ class UserProfile:
         "dinner": "broth_or_soft"
     })
     batch_prep_days: list[str] = field(default_factory=lambda: ["Sunday", "Wednesday"])
+    week_start_day: str = "Saturday"
+    weeks_ahead: int = 1
 
 @dataclass
 class MealSlot:
@@ -61,6 +63,8 @@ class MealSlot:
     carbs_g: float
     calories: float
     prep_type: str = "fresh_quick"
+    veg_g: int = 0
+    fruit_g: int = 0
 
 @dataclass
 class DayPlan:
@@ -73,6 +77,8 @@ class DayPlan:
     total_fat_g: float = 0.0
     total_carbs_g: float = 0.0
     total_calories: float = 0.0
+    total_veg_g: int = 0
+    total_fruit_g: int = 0
 
 @dataclass
 class WeeklyPlan:

@@ -48,17 +48,21 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
     weekly_notes = "\n".join(f"  - [Weekly Note] {n}" for n in mem_ctx["weekly"]) or "  (None recorded for this week)"
     long_term_notes = "\n".join(f"  - [Durable Fact] {n}" for n in mem_ctx["long_term"]) or "  (None recorded yet)"
 
-    prefix = get_current_cycle_prefix(user_timezone, now_local)
+    profile = load_user_profile(data_dir)
+    week_start_day = profile.week_start_day if profile else "Saturday"
+    weeks_ahead = profile.weeks_ahead if profile else 1
+    prefix = get_current_cycle_prefix(user_timezone, now_local, week_start_day=week_start_day)
     active_plan_csv = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
+    active_batch_csv = os.path.join(data_dir, "plans", f"{prefix}_batch_cook.csv")
     active_grocery_csv = os.path.join(data_dir, "plans", f"{prefix}_grocery_list.csv")
 
-    profile = load_user_profile(data_dir)
     if profile:
         ensure_weekly_plan_artifacts(profile, data_dir)
         profile_summary = (
             f"- Bodyweight: {profile.bodyweight_kg:.1f} kg | Goal: {profile.goal_state} | Target Calories: {profile.target_calories:.0f} kcal\n"
             f"- Daily Target Macros: Protein {profile.protein_multiplier * profile.bodyweight_kg:.1f}g ({profile.protein_multiplier:.1f}g/kg), "
-            f"Fat {profile.fat_multiplier * profile.bodyweight_kg:.1f}g ({profile.fat_multiplier:.1f}g/kg)"
+            f"Fat {profile.fat_multiplier * profile.bodyweight_kg:.1f}g ({profile.fat_multiplier:.1f}g/kg)\n"
+            f"- Week Start Day: {week_start_day} | Planning Window: Current + {weeks_ahead} week(s) ahead"
         )
     else:
         profile_summary = "- Profile not yet onboarded. Prompt user to onboard if requested."
@@ -68,8 +72,9 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
 CURRENT TEMPORAL & ARTIFACT CONTEXT:
 - Local Time: {now_str} ({weekday_str})
 - Timezone: {user_timezone}
-- Active Cycle Prefix: {prefix} (Saturday-to-Friday)
+- Active Cycle Prefix: {prefix} (Starting {week_start_day}, {weeks_ahead} week(s) ahead)
 - Current Weekly Meal Plan Artifact: {active_plan_csv}
+- Current Weekly Batch Cook Artifact: {active_batch_csv}
 - Current Weekly Grocery List Artifact: {active_grocery_csv}
 Always interpret relative temporal expressions ("today", "tonight", "tomorrow's lunch", "Thursday dinner") using this current local clock.
 
@@ -147,7 +152,9 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         goal_state: str,
         target_calories: float,
         protein_multiplier: float,
-        fat_multiplier: float
+        fat_multiplier: float,
+        week_start_day: str = "Saturday",
+        weeks_ahead: int = 1
     ) -> str:
         """Onboards the user, stores their timezone and dietary profile, and initializes bookkeeping files."""
         # Validate calorie feasibility upfront
@@ -162,29 +169,68 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             "goal_state": goal_state,
             "target_calories": target_calories,
             "protein_multiplier": protein_multiplier,
-            "fat_multiplier": fat_multiplier
+            "fat_multiplier": fat_multiplier,
+            "week_start_day": week_start_day,
+            "weeks_ahead": weeks_ahead
         })
         init_bookkeeping_artifacts(data_dir)
         PantryState.load(data_dir).save(data_dir)
         return (
             f"Profile created successfully for {bodyweight_kg}kg ({goal_state}). "
             f"Timezone: {profile.timezone}. Calorie target: {target_calories:.0f} kcal. "
-            f"Daily targets: {bodyweight_kg * protein_multiplier:.1f}g Protein, {bodyweight_kg * fat_multiplier:.1f}g Fat."
+            f"Daily targets: {bodyweight_kg * protein_multiplier:.1f}g Protein, {bodyweight_kg * fat_multiplier:.1f}g Fat. "
+            f"Schedule: Week starts on {profile.week_start_day}, planning {profile.weeks_ahead} week(s) ahead."
+        )
+
+    def tool_configure_planning_schedule(
+        week_start_day: Optional[str] = None,
+        weeks_ahead: Optional[int] = None
+    ) -> str:
+        """Configures which day starts the week and how many weeks ahead are planned and retained.
+        
+        Args:
+            week_start_day: Day that starts the planning cycle (e.g. 'Saturday', 'Monday', 'Sunday').
+            weeks_ahead: Number of future weeks ahead to generate and retain (default 1 for current + next week).
+        """
+        profile = load_user_profile(data_dir)
+        if not profile:
+            return "Error: No user profile found. Please onboard first."
+        if week_start_day:
+            profile.week_start_day = week_start_day.strip().capitalize()
+        if weeks_ahead is not None:
+            profile.weeks_ahead = max(0, int(weeks_ahead))
+
+        profile_path = os.path.join(data_dir, "profile.json")
+        with open(profile_path, "w", encoding="utf-8") as f:
+            json.dump(profile.__dict__, f, indent=2)
+
+        plan_path, grocery_path, _ = ensure_weekly_plan_artifacts(profile, data_dir, force=True)
+        prefix = get_current_cycle_prefix(profile.timezone, week_start_day=profile.week_start_day)
+        batch_path = os.path.join(data_dir, "plans", f"{prefix}_batch_cook.csv")
+
+        return (
+            f"Updated planning schedule: Week starts on {profile.week_start_day}, "
+            f"planning {profile.weeks_ahead} week(s) ahead. Active cycle plan: {plan_path}, "
+            f"batch cook: {batch_path}, groceries: {grocery_path}."
         )
 
     def tool_generate_meal_plan() -> str:
-        """Generates or updates the weekly zero-waste meal plan and split grocery list, exporting CSV artifacts."""
+        """Generates or updates the weekly zero-waste meal plan, batch cook file, and split grocery list."""
         profile = load_user_profile(data_dir)
         if not profile:
             return "Error: No user profile found. Please onboard first."
         
-        plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
+        plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir, force=True)
         plan = generate_weekly_plan(profile)
         plan_cache["plan"] = plan
 
+        prefix = get_current_cycle_prefix(profile.timezone, week_start_day=profile.week_start_day)
+        batch_path = os.path.join(data_dir, "plans", f"{prefix}_batch_cook.csv")
+
         status = "Generated 7-day meal plan" if newly_created else "Active 7-day meal plan"
         return (
-            f"{status} (Saturday-Friday) saved to {plan_path}. "
+            f"{status} (starting {profile.week_start_day}) saved to {plan_path}. "
+            f"Batch cook requirements saved to {batch_path}. "
             f"Split grocery list saved to {grocery_path}."
         )
 
@@ -281,7 +327,10 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
     def tool_view_grocery_list() -> str:
         """Returns a summary of the current split grocery list."""
         profile = load_user_profile(data_dir)
-        prefix = get_current_cycle_prefix(profile.timezone if profile else "UTC")
+        prefix = get_current_cycle_prefix(
+            profile.timezone if profile else "UTC",
+            week_start_day=profile.week_start_day if profile else "Saturday"
+        )
         dated_grocery = os.path.join(data_dir, "plans", f"{prefix}_grocery_list.csv")
         path = dated_grocery if os.path.exists(dated_grocery) else os.path.join(data_dir, "grocery_list.csv")
         if not os.path.exists(path):
@@ -290,15 +339,32 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             lines = f.readlines()
         return "".join(lines[:15]) + ("\n... [remaining items in CSV]" if len(lines) > 15 else "")
 
+    def tool_view_batch_cook_list() -> str:
+        """Returns a summary of the batch-cooked dishes for the current week and their grocery requirements."""
+        profile = load_user_profile(data_dir)
+        prefix = get_current_cycle_prefix(
+            profile.timezone if profile else "UTC",
+            week_start_day=profile.week_start_day if profile else "Saturday"
+        )
+        dated_batch = os.path.join(data_dir, "plans", f"{prefix}_batch_cook.csv")
+        path = dated_batch if os.path.exists(dated_batch) else os.path.join(data_dir, "batch_cook.csv")
+        if not os.path.exists(path):
+            return "No batch cook CSV generated yet. Please generate a meal plan first."
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return "".join(lines[:15]) + ("\n... [remaining items in CSV]" if len(lines) > 15 else "")
+
     return [
         tool_save_memory_note,
         tool_onboard_user,
+        tool_configure_planning_schedule,
         tool_generate_meal_plan,
         tool_report_meal_deviation,
         tool_substitute_ingredient,
         tool_log_price_update,
         tool_get_analytics,
-        tool_view_grocery_list
+        tool_view_grocery_list,
+        tool_view_batch_cook_list
     ]
 
 def get_root_agent(data_dir: str = "data"):

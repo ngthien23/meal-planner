@@ -37,6 +37,17 @@ class TestMealGenerator(unittest.TestCase):
             reader = csv.DictReader(f)
             rows = list(reader)
             self.assertEqual(len(rows), 21) # 7 days * 3 meals
-            # Verify raw/dry specified in ingredients column
-            self.assertTrue(any("raw" in r["Ingredients"].lower() or "dry" in r["Ingredients"].lower() for r in rows))
+            # Verify strict 8 columns
+            self.assertEqual(list(rows[0].keys()), ["Date", "Meal", "Recipe", "Ingredient", "P", "C", "F", "Calories"])
+            # Verify raw/dry specified in ingredient column and integers with no decimals
+            self.assertTrue(any("raw" in r["Ingredient"].lower() or "dry" in r["Ingredient"].lower() for r in rows))
+            for r in rows:
+                self.assertNotIn(".", r["P"])
+                self.assertNotIn(".", r["C"])
+                self.assertNotIn(".", r["F"])
+                self.assertNotIn(".", r["Calories"])
         os.remove(csv_path)
+
+        # Macro tracking for veg and fruit
+        self.assertTrue(any(day.total_veg_g > 0 for day in plan.days))
+        self.assertTrue(any(day.total_fruit_g > 0 for day in plan.days))

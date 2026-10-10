@@ -30,7 +30,7 @@ def init_bookkeeping_artifacts(data_dir: str) -> None:
     if not os.path.exists(logs_path):
         with open(logs_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Date", "Meal", "Recipe", "Adherence", "Protein_Cost_EUR", "Calories", "Notes"])
+            writer.writerow(["Date", "Meal", "Recipe", "Adherence", "Protein_Cost_EUR", "Calories", "Veg_g", "Fruit_g", "Notes"])
 
 def record_price(
     data_dir: str,
@@ -58,7 +58,7 @@ def record_price(
         ])
 
 def log_meal_consumption(data_dir: str, entry: dict) -> None:
-    """Appends a consumed meal log entry to meal_logs.csv."""
+    """Appends a consumed meal log entry to meal_logs.csv with vegetable and fruit tracking."""
     init_bookkeeping_artifacts(data_dir)
     logs_path = os.path.join(data_dir, "meal_logs.csv")
     with open(logs_path, "a", newline="", encoding="utf-8") as f:
@@ -69,12 +69,14 @@ def log_meal_consumption(data_dir: str, entry: dict) -> None:
             entry.get("recipe", "custom"),
             entry.get("adherence", "completed"),
             f"{float(entry.get('protein_cost_eur', 0.0)):.2f}",
-            f"{float(entry.get('calories', 0.0)):.1f}",
+            f"{int(round(float(entry.get('calories', 0.0) or 0)))}",
+            f"{int(round(float(entry.get('veg_g', 0) or 0)))}",
+            f"{int(round(float(entry.get('fruit_g', 0) or 0)))}",
             entry.get("notes", "")
         ])
 
 def get_analytics_summary(data_dir: str) -> dict:
-    """Aggregates nutritional adherence and grocery protein spending trends."""
+    """Aggregates nutritional adherence, vegetable/fruit intake, and grocery protein spending trends."""
     logs_path = os.path.join(data_dir, "meal_logs.csv")
     prices_path = os.path.join(data_dir, "prices.csv")
 
@@ -83,11 +85,17 @@ def get_analytics_summary(data_dir: str) -> dict:
             "total_protein_spend_eur": 0.0,
             "logged_meals_count": 0,
             "adherence_rate_pct": 100.0,
-            "average_calories_per_logged_meal": 0.0
+            "average_calories_per_logged_meal": 0.0,
+            "total_veg_g": 0,
+            "total_fruit_g": 0,
+            "average_veg_g_per_logged_meal": 0.0,
+            "average_fruit_g_per_logged_meal": 0.0
         }
 
     total_spend = 0.0
     total_kcal = 0.0
+    total_veg = 0.0
+    total_fruit = 0.0
     completed_count = 0
     total_count = 0
 
@@ -97,19 +105,29 @@ def get_analytics_summary(data_dir: str) -> dict:
             total_count += 1
             cost = float(row.get("Protein_Cost_EUR", 0.0) or 0.0)
             kcal = float(row.get("Calories", 0.0) or 0.0)
+            veg = float(row.get("Veg_g", 0.0) or 0.0)
+            fruit = float(row.get("Fruit_g", 0.0) or 0.0)
             adherence = row.get("Adherence", "completed")
 
             total_spend += cost
             total_kcal += kcal
+            total_veg += veg
+            total_fruit += fruit
             if adherence == "completed":
                 completed_count += 1
 
     adherence_pct = (completed_count / total_count * 100.0) if total_count > 0 else 100.0
     avg_kcal = (total_kcal / total_count) if total_count > 0 else 0.0
+    avg_veg = (total_veg / total_count) if total_count > 0 else 0.0
+    avg_fruit = (total_fruit / total_count) if total_count > 0 else 0.0
 
     return {
         "total_protein_spend_eur": round(total_spend, 2),
         "logged_meals_count": total_count,
         "adherence_rate_pct": round(adherence_pct, 1),
-        "average_calories_per_logged_meal": round(avg_kcal, 1)
+        "average_calories_per_logged_meal": round(avg_kcal, 1),
+        "total_veg_g": int(round(total_veg)),
+        "total_fruit_g": int(round(total_fruit)),
+        "average_veg_g_per_logged_meal": round(avg_veg, 1),
+        "average_fruit_g_per_logged_meal": round(avg_fruit, 1)
     }
