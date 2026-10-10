@@ -11,14 +11,43 @@ TRIVIAL_PATTERNS = [
 ]
 
 class MemoryManager:
-    """Manages short-term (weekly) and long-term (monthly/yearly) athlete memory."""
+    """Manages short-term (weekly) and long-term (monthly/yearly) athlete memory using Markdown text files."""
 
     def __init__(self, data_dir: str = "data"):
         self.data_dir = data_dir
         self.memory_dir = os.path.join(data_dir, "memory")
         os.makedirs(self.memory_dir, exist_ok=True)
-        self.weekly_path = os.path.join(self.memory_dir, "weekly.json")
-        self.long_term_path = os.path.join(self.memory_dir, "long_term.json")
+        self.weekly_path = os.path.join(self.memory_dir, "weekly.md")
+        self.long_term_path = os.path.join(self.memory_dir, "long_term.md")
+
+    def _read_notes(self, path: str, legacy_json_path: Optional[str] = None) -> list[str]:
+        notes = []
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        if stripped.startswith("- ") or stripped.startswith("* "):
+                            notes.append(stripped[2:].strip())
+                        elif not stripped.startswith("#"):
+                            notes.append(stripped)
+            except Exception:
+                pass
+        elif legacy_json_path and os.path.exists(legacy_json_path):
+            try:
+                with open(legacy_json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    notes = [item["note"] for item in data if isinstance(item, dict) and "note" in item]
+            except Exception:
+                pass
+        return notes
+
+    def _write_notes(self, path: str, notes: list[str]) -> None:
+        lines = [f"- {n}\n" for n in notes]
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
 
     def is_trivial(self, note: str) -> bool:
         """Determines if a conversational note is trivial chatter and should not be stored."""
@@ -51,17 +80,12 @@ class MemoryManager:
 
         target_tier = "long_term" if tier in ["long_term", "long", "monthly", "yearly"] else "weekly"
         target_path = self.long_term_path if target_tier == "long_term" else self.weekly_path
+        legacy_json = os.path.join(self.memory_dir, f"{target_tier}.json")
 
-        existing = []
-        if os.path.exists(target_path):
-            try:
-                with open(target_path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            except Exception:
-                existing = []
+        existing = self._read_notes(target_path, legacy_json)
 
         # Deduplication check
-        if any(item.get("note", "").lower() == cleaned.lower() for item in existing):
+        if any(item.lower() == cleaned.lower() for item in existing):
             return {
                 "status": "ignored",
                 "reason": "Duplicate note already stored in memory.",
@@ -69,18 +93,13 @@ class MemoryManager:
                 "note": cleaned
             }
 
-        entry = {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "note": cleaned
-        }
-        existing.append(entry)
+        existing.append(cleaned)
 
         # Cap weekly notes to 30 most recent to prevent bloat
         if target_tier == "weekly" and len(existing) > 30:
             existing = existing[-30:]
 
-        with open(target_path, "w", encoding="utf-8") as f:
-            json.dump(existing, f, indent=2)
+        self._write_notes(target_path, existing)
 
         return {
             "status": "saved",
@@ -91,32 +110,24 @@ class MemoryManager:
 
     def get_context(self) -> dict:
         """Returns loaded memory for context injection."""
-        weekly = []
-        if os.path.exists(self.weekly_path):
-            try:
-                with open(self.weekly_path, "r", encoding="utf-8") as f:
-                    weekly = json.load(f)
-            except Exception:
-                weekly = []
-
-        long_term = []
-        if os.path.exists(self.long_term_path):
-            try:
-                with open(self.long_term_path, "r", encoding="utf-8") as f:
-                    long_term = json.load(f)
-            except Exception:
-                long_term = []
-
+        weekly = self._read_notes(self.weekly_path, os.path.join(self.memory_dir, "weekly.json"))
+        long_term = self._read_notes(self.long_term_path, os.path.join(self.memory_dir, "long_term.json"))
         return {
-            "weekly": [item["note"] for item in weekly],
-            "long_term": [item["note"] for item in long_term]
+            "weekly": weekly,
+            "long_term": long_term
         }
 
     def clear_weekly_memory(self) -> None:
         """Clears short-term memory when rolling over to a new planning week."""
         if os.path.exists(self.weekly_path):
             with open(self.weekly_path, "w", encoding="utf-8") as f:
-                json.dump([], f)
+                f.write("")
+        legacy = os.path.join(self.memory_dir, "weekly.json")
+        if os.path.exists(legacy):
+            try:
+                os.remove(legacy)
+            except Exception:
+                pass
 
     def hydrate(self, user_timezone: str = "Europe/Brussels") -> tuple[list[tuple[str, str, float]], float]:
         """Loads only relevant context files (preferences, current week meal plan, memory) from disk, benchmarking latency."""
@@ -131,8 +142,8 @@ class MemoryManager:
         targets = [
             ("Athlete Preferences", os.path.join(self.data_dir, "profile.json")),
             ("Current Week Meal Plan", current_plan_csv),
-            ("Active Weekly Memory", self.weekly_path),
-            ("Durable Long-term Facts", self.long_term_path),
+            ("Active Weekly Memory", self.weekly_path if os.path.exists(self.weekly_path) else os.path.join(self.memory_dir, "weekly.json")),
+            ("Durable Long-term Facts", self.long_term_path if os.path.exists(self.long_term_path) else os.path.join(self.memory_dir, "long_term.json")),
         ]
 
         records = []
