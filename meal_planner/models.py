@@ -98,6 +98,22 @@ class WeeklyPlan:
     days: list[DayPlan]
     rollover_items: list[dict] = field(default_factory=list)
 
+@dataclass
+class InventoryItem:
+    food_id: str
+    name: str
+    quantity_g: float
+    status: str = "actual"  # "actual" | "assumed"
+    source: str = "user_report"
+    purchased_date: str = ""
+
+@dataclass
+class InventoryState:
+    last_reconciled_at: Optional[str] = None
+    carried_calories: float = 0.0
+    carried_protein_g: float = 0.0
+    items: list[InventoryItem] = field(default_factory=list)
+
 def load_catalog(
     catalog_dir: Optional[str] = None,
     data_dir: Optional[str] = None
