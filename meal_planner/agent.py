@@ -75,8 +75,9 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
     is_onboarded = bool(profile.is_onboarded and profile.bodyweight_kg > 0 and profile.target_calories > 0) if profile else False
     if profile and is_onboarded:
         ensure_weekly_plan_artifacts(profile, data_dir)
+        budget_str = f" | Weekly Protein Budget: {profile.currency} {profile.weekly_protein_budget:.2f}" if profile.weekly_protein_budget > 0 else ""
         profile_summary = (
-            f"- Bodyweight: {profile.bodyweight_kg:.1f} kg | Goal: {profile.goal_state} | Target Calories: {profile.target_calories:.0f} kcal\n"
+            f"- Bodyweight: {profile.bodyweight_kg:.1f} kg | Goal: {profile.goal_state} | Target Calories: {profile.target_calories:.0f} kcal{budget_str}\n"
             f"- Daily Target Macros: Protein {profile.protein_multiplier * profile.bodyweight_kg:.1f}g ({profile.protein_multiplier:.1f}g/kg), "
             f"Fat {profile.fat_multiplier * profile.bodyweight_kg:.1f}g ({profile.fat_multiplier:.1f}g/kg)\n"
             f"- Week Start Day: {week_start_day} | Planning Window: Current + {weeks_ahead} week(s) ahead"
@@ -102,6 +103,7 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
      - Fitness goal (maintenance, lean_bulk, or cut)
      - Target daily calories (or let you calculate based on bodyweight and goal)
      - Preferred protein intake (default ~2.2g per kg bodyweight)
+     - Weekly budget for protein (e.g. €40, €50/week)
      - Qualitative eating preferences (e.g. "Prefer Vietnamese food, broth-based, noodle. Usually buys Thai jasmine rice", textures, favorite dishes)
      - Preferred timezone and currency (default: {user_timezone}, {currency_val})
   3. Once the user replies with their preferences:
@@ -152,9 +154,11 @@ MULTIMODAL PHOTO HANDLING (BILLS & MEALS):
 1. GROCERY BILLS / RECEIPT PHOTOS:
    - When the user uploads a photo of a store bill or receipt:
      - Detect the store name (e.g. Colruyt, Delhaize, Albert Heijn) and date.
+     - PRIMARY PURPOSE: Update PROTEIN stock (`inventory.json` via `tool_update_on_hand_stock`).
+     - IGNORE non-protein items (produce, grains, pantry staples, condiments) for stock updates — fridge stock bookkeeping is strictly protein-only.
      - Extract prices and estimate totals using internal knowledge and web browsing (or call tool_log_price_update if tracking requested).
-     - If the user bought a substitution or unexpected ingredients, adjust the meal plan and grocery artifacts accordingly.
-     - Respond concisely with estimated costs.
+     - If the user bought a substitution or unexpected protein cut, adjust the meal plan and grocery artifacts accordingly.
+     - Respond concisely with estimated costs and updated protein stock.
 2. MEAL CONSUMPTION PHOTOS:
    - When the user uploads a photo of a meal, plate, or shake:
      - Identify the ingredients and estimate the protein (g) and calorie content from portion sizes.
@@ -166,8 +170,9 @@ CORE ATHLETE RULES & PLANNING PRINCIPLES:
 1. YOU ARE THE PLANNER & CHEF (TRAIN OF THOUGHT & REASONING):
    When constructing or adapting a meal plan, base everything around protein stock and nutritional needs:
    - Step 1: Consider the Budget
-     * Reason over overall grocery budget constraints.
+     * Base grocery planning around the athlete's weekly budget for protein (e.g. €40–€50/week).
      * Estimate ingredient costs using your own reasoning and web-browsing capability (no local price database required).
+     * Balance cost-effective high-protein staples (eggs, canned tuna, chicken thighs, whey powder) with more premium cuts to fit within the weekly protein budget.
    - Step 2: Allocate the Budget by Roughly Balancing Needs and Preferences
      * Allocate the budget toward core protein essentials first (chicken thighs/breast, eggs, canned tuna, whey powder).
      * Balance with cultural and qualitative eating preferences stored in Long-Term Memory (e.g. Vietnamese dishes, phở, bún, comforting broth-based soups for dinner, Thai jasmine rice).
@@ -180,6 +185,9 @@ CORE ATHLETE RULES & PLANNING PRINCIPLES:
    - Qualitative eating preferences (e.g. Vietnamese dishes, phở, bún, Thai jasmine rice, favorite foods, broth vs solid textures) are stored as natural text in Long-Term Memory (see ATHLETE MEMORY above), NOT hardcoded into JSON schemas. Follow and adapt to these natural memory notes when designing meals.
    - When the athlete shares new eating habits or lasting preferences, save them to long-term memory via `tool_save_memory_note(note, tier='long_term')`.
    - You work directly with artifacts: read and update `{active_plan_csv}` with `tool_update_meal_plan` and `{active_grocery_csv}` with `tool_update_grocery_list`.
+   - STOCK BOOKKEEPING VS. GROCERY LIST SCOPE:
+     * Fridge Stock Bookkeeping (`inventory.json` / `tool_update_on_hand_stock`) tracks PROTEIN ONLY (chicken, beef, pork, fish, shrimp, eggs, canned tuna, whey powder, tofu, etc.). Do NOT track produce, carbs, oils, or pantry items in fridge stock bookkeeping.
+     * Weekly Grocery List (`{active_grocery_csv}`) MUST comprehensively include ALL food types (proteins, carbs, vegetables, fruits, pantry staples, seasonings).
 2. ROUGH MACROS & EVEN STOCK PORTIONING:
    - Daily macronutrients are rough guidelines, NOT rigid decimal constraints!
    - When portioning on-hand meat or scheduled cuts, prioritize even, natural portioning (e.g. four 250g portions of 1000g chicken) over micro-optimizing decimal numbers.
@@ -232,6 +240,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         target_calories: float,
         protein_multiplier: float = 2.2,
         fat_multiplier: float = 1.0,
+        weekly_protein_budget: float = 0.0,
         week_start_day: str = "Saturday",
         weeks_ahead: int = 1,
         currency: str = "EUR",
@@ -247,6 +256,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             target_calories: Daily calorie target.
             protein_multiplier: Protein target in grams per kg bodyweight (default 2.2g/kg).
             fat_multiplier: Fat target in grams per kg bodyweight (default 1.0g/kg).
+            weekly_protein_budget: Weekly budget for protein sources in chosen currency (e.g. 40.0 for €40/week).
             week_start_day: Day starting the week (default 'Saturday').
             weeks_ahead: Number of future weeks ahead to generate and retain (default 1).
             currency: Preferred currency code ('EUR', 'USD', etc.).
@@ -266,6 +276,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             "target_calories": target_calories,
             "protein_multiplier": protein_multiplier,
             "fat_multiplier": fat_multiplier,
+            "weekly_protein_budget": weekly_protein_budget,
             "week_start_day": week_start_day,
             "weeks_ahead": weeks_ahead,
             "currency": currency,
@@ -276,10 +287,11 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         init_bookkeeping_artifacts(data_dir)
         PantryState.load(data_dir).save(data_dir)
         prefs_msg = f" Long-term eating preferences recorded: '{eating_preferences}'." if eating_preferences else ""
+        budget_msg = f" Weekly protein budget: {profile.currency} {profile.weekly_protein_budget:.2f}." if profile.weekly_protein_budget > 0 else ""
         return (
             f"Profile created. Profile initialized successfully for {bodyweight_kg}kg ({goal_state}). "
             f"Timezone: {profile.timezone}. Calorie target: {target_calories:.0f} kcal. "
-            f"Daily targets: {bodyweight_kg * protein_multiplier:.1f}g Protein, {bodyweight_kg * fat_multiplier:.1f}g Fat. "
+            f"Daily targets: {bodyweight_kg * protein_multiplier:.1f}g Protein, {bodyweight_kg * fat_multiplier:.1f}g Fat.{budget_msg} "
             f"Schedule: Week starts on {profile.week_start_day}, planning {profile.weeks_ahead} week(s) ahead.{prefs_msg}"
         )
 

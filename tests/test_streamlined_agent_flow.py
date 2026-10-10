@@ -147,8 +147,18 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         
         # Verify 3-step meal planning train of thought
         self.assertIn("Step 1: Consider the Budget", prompt)
+        self.assertIn("weekly budget for protein", prompt)
         self.assertIn("Step 2: Allocate the Budget by Roughly Balancing Needs and Preferences", prompt)
         self.assertIn("Step 3: Be Aware of Nuances Relating to Nutrition Facts", prompt)
         self.assertIn("Raw vs. cooked weight yields", prompt)
         self.assertIn("Bone-in and skin-on vs. boneless and skinless", prompt)
         self.assertIn("NO RIGID LOCAL NUTRITION OR PRICE BOOKKEEPING", prompt)
+        
+        # Verify grocery receipt guideline and scope distinction
+        self.assertIn("PRIMARY PURPOSE: Update PROTEIN stock", prompt)
+        self.assertIn("IGNORE non-protein items", prompt)
+        self.assertIn("STOCK BOOKKEEPING VS. GROCERY LIST SCOPE", prompt)
+        self.assertIn("Fridge Stock Bookkeeping", prompt)
+        self.assertIn("tracks PROTEIN ONLY", prompt)
+        self.assertIn("Weekly Grocery List", prompt)
+        self.assertIn("MUST comprehensively include ALL food types", prompt)

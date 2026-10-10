@@ -85,6 +85,7 @@ class TestConversationalOnboarding(unittest.TestCase):
         self.assertIn("ONBOARDING STATE", instruction)
         self.assertIn("tool_onboard_user", instruction)
         self.assertIn("tool_generate_meal_plan", instruction)
+        self.assertIn("Weekly budget for protein", instruction)
         self.assertNotIn("ACTIVE PLANNING STATE", instruction)
 
     def test_system_instruction_subsequent_chat_assists_planning(self):
@@ -94,13 +95,15 @@ class TestConversationalOnboarding(unittest.TestCase):
             "is_onboarded": True,
             "bodyweight_kg": 65.0,
             "target_calories": 2550.0,
-            "goal_state": "lean_bulk"
+            "goal_state": "lean_bulk",
+            "weekly_protein_budget": 45.0
         })
 
         instruction = build_system_instruction(user_timezone="Europe/Brussels", data_dir=self.test_dir)
         self.assertIn("ACTIVE PLANNING STATE", instruction)
         self.assertNotIn("ONBOARDING STATE", instruction)
         self.assertIn("65.0 kg", instruction)
+        self.assertIn("Weekly Protein Budget: EUR 45.00", instruction)
 
     def test_tool_onboard_user_marks_is_onboarded_true(self):
         """Calling tool_onboard_user updates profile and sets is_onboarded to True."""
@@ -110,13 +113,15 @@ class TestConversationalOnboarding(unittest.TestCase):
         })
 
         tools_map = {t.__name__: t for t in get_agent_tools(data_dir=self.test_dir)}
-        msg = tools_map["tool_onboard_user"]("Europe/Brussels", 70.0, "lean_bulk", 2600.0, 2.0, 1.0)
+        msg = tools_map["tool_onboard_user"]("Europe/Brussels", 70.0, "lean_bulk", 2600.0, 2.0, 1.0, weekly_protein_budget=50.0)
         self.assertIn("Profile initialized", msg)
+        self.assertIn("Weekly protein budget: EUR 50.00", msg)
 
         updated_profile = load_user_profile(self.test_dir)
         self.assertTrue(updated_profile.is_onboarded)
         self.assertEqual(updated_profile.bodyweight_kg, 70.0)
         self.assertEqual(updated_profile.target_calories, 2600.0)
+        self.assertEqual(updated_profile.weekly_protein_budget, 50.0)
 
 
 if __name__ == "__main__":

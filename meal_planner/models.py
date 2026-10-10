@@ -52,6 +52,7 @@ class UserProfile:
     target_calories: float = 2550.0
     protein_multiplier: float = 2.2
     fat_multiplier: float = 1.0
+    weekly_protein_budget: float = 0.0
     restrictions: list[str] = field(default_factory=list)
     week_start_day: str = "Saturday"
     weeks_ahead: int = 1

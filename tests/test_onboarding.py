@@ -45,16 +45,19 @@ class TestOnboarding(unittest.TestCase):
             "target_calories": 2550.0,
             "protein_multiplier": 2.3,
             "fat_multiplier": 1.0,
+            "weekly_protein_budget": 45.0,
             "eating_preferences": "Prefer Vietnamese food, broth-based, noodle. Usually buys Thai jasmine rice."
         })
         self.assertEqual(profile.bodyweight_kg, 65.0)
         self.assertEqual(profile.timezone, "Europe/Brussels")
+        self.assertEqual(profile.weekly_protein_budget, 45.0)
         
         # Verify persistence and lack of overkill texture fields
         loaded = load_user_profile(self.test_dir)
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.bodyweight_kg, 65.0)
         self.assertEqual(loaded.target_calories, 2550.0)
+        self.assertEqual(loaded.weekly_protein_budget, 45.0)
 
         # Check raw json
         import json

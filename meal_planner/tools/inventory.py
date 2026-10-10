@@ -126,24 +126,9 @@ def record_actual_stock(
     state = load_inventory_state(data_dir)
 
     if clear_unbought_run_meats:
-        try:
-            catalog_ingredients, _ = load_catalog(data_dir=data_dir)
-        except Exception:
-            catalog_ingredients = {}
-
-        def is_meat_or_perishable(food_id: str) -> bool:
-            if food_id in catalog_ingredients:
-                ing = catalog_ingredients[food_id]
-                return bool(ing.perishable and (ing.category in ("meat", "seafood", "poultry") or "meat" in ing.category.lower()))
-            lower_id = food_id.lower()
-            if "canned" in lower_id or "dried" in lower_id:
-                return False
-            keywords = ("chicken", "beef", "pork", "meat", "shrimp", "fish", "salmon", "turkey", "lamb", "steak", "thigh", "wing", "breast")
-            return any(k in lower_id for k in keywords)
-
         state.items = [
             item for item in state.items
-            if not (item.status == "assumed" and is_meat_or_perishable(item.food_id))
+            if item.status != "assumed"
         ]
 
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -295,19 +280,9 @@ def reconcile_inventory_state(
     except Exception:
         catalog_ingredients = {}
 
-    def is_meat_or_perishable(food_id: str) -> bool:
-        if food_id in catalog_ingredients:
-            ing = catalog_ingredients[food_id]
-            return bool(ing.perishable and (ing.category in ("meat", "seafood", "poultry") or "meat" in ing.category.lower()))
-        lower_id = food_id.lower()
-        if "canned" in lower_id or "dried" in lower_id:
-            return False
-        keywords = ("chicken", "beef", "pork", "meat", "shrimp", "fish", "salmon", "turkey", "lamb", "steak", "thigh", "wing", "breast")
-        return any(k in lower_id for k in keywords)
-
-    # Only actual meat with positive stock on hand suppresses assumed runs
-    user_has_actual_meat = any(
-        it.status == "actual" and it.quantity_g > 0 and is_meat_or_perishable(it.food_id)
+    # Only actual items with positive stock on hand suppress assumed runs
+    user_has_actual_stock = any(
+        it.status == "actual" and it.quantity_g > 0
         for it in state.items
     )
 
@@ -400,13 +375,11 @@ def reconcile_inventory_state(
                         if not food_id:
                             food_id = raw_item_name.lower().replace(" ", "_").replace("-", "_")
 
-                        is_perishable = is_meat_or_perishable(food_id)
-
                         existing_actual = next((i for i in state.items if i.food_id == food_id and i.status == "actual"), None)
                         if existing_actual and existing_actual.quantity_g > 0:
                             continue
 
-                        if is_perishable and user_has_actual_meat:
+                        if user_has_actual_stock:
                             continue
 
                         if existing_actual and existing_actual.quantity_g <= 0:
