@@ -196,7 +196,7 @@ def export_batch_cook_csv(plan: WeeklyPlan, filepath: str) -> None:
     """Exports a dedicated CSV showing batch-cooked dishes for the week and their grocery requirements."""
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     fieldnames = [
-        "Dish", "Prep_Day", "Days_Served", "Portions", "Ingredient", "Total_Weight_g", "Grocery_Run"
+        "Dish", "Ingredient", "Grocery_Run", "Prep_Day", "Days_Served"
     ]
 
     # Collect batch-cooked slots from the weekly plan
@@ -229,14 +229,13 @@ def export_batch_cook_csv(plan: WeeklyPlan, filepath: str) -> None:
     for dish_info in batch_dishes.values():
         days_str = ", ".join(dish_info["days_served"])
         for ing_name, tot_w in dish_info["ingredients"].items():
+            ingredient_str = f"{int(round(tot_w))}g {ing_name}"
             rows.append({
                 "Dish": dish_info["dish"],
+                "Ingredient": ingredient_str,
+                "Grocery_Run": dish_info["grocery_run"],
                 "Prep_Day": dish_info["prep_day"],
-                "Days_Served": days_str,
-                "Portions": dish_info["portions"],
-                "Ingredient": ing_name,
-                "Total_Weight_g": int(round(tot_w)),
-                "Grocery_Run": dish_info["grocery_run"]
+                "Days_Served": days_str
             })
 
     with open(filepath, "w", newline="", encoding="utf-8") as f:

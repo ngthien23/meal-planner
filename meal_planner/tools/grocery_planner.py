@@ -103,6 +103,7 @@ def generate_split_groceries(
                 "estimated_price_eur": est_cost,
                 "storage_note": storage_note
             })
+        items.sort(key=lambda x: (x["category"].lower(), x["name"].lower()))
         return items
 
     saturday_items = _build_run_items(sat_usage, "Saturday")
@@ -132,6 +133,7 @@ def generate_split_groceries(
                 "estimated_price_eur": ing.unit_price_eur,
                 "storage_note": "Pantry Restock"
             })
+    restock_items.sort(key=lambda x: (x["category"].lower(), x["name"].lower()))
 
     return SplitGroceryList(
         saturday_run=saturday_items,
@@ -140,7 +142,7 @@ def generate_split_groceries(
     )
 
 def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str) -> None:
-    """Exports split grocery list to CSV."""
+    """Exports split grocery list to CSV grouped by [Run, Category]."""
     os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
     fieldnames = [
         "Run", "Category", "Item", "Quantity", "Package_Size", "Estimated_Price_EUR", "Storage_Note"
@@ -149,7 +151,8 @@ def export_grocery_list_csv(grocery_list: SplitGroceryList, filepath: str) -> No
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for run_items in [grocery_list.saturday_run, grocery_list.wednesday_run, grocery_list.pantry_restock]:
-            for item in run_items:
+            sorted_items = sorted(run_items, key=lambda x: (x.get("category", "").lower(), x.get("name", "").lower()))
+            for item in sorted_items:
                 needed_g_val = int(round(item.get("needed_g", 0)))
                 writer.writerow({
                     "Run": item["run"],

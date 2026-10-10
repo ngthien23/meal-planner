@@ -128,7 +128,7 @@ class TestWeeklyTweaks(unittest.TestCase):
         self.assertTrue(os.path.exists(batch_path))
         with open(batch_path, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            expected_fields = ["Dish", "Prep_Day", "Days_Served", "Portions", "Ingredient", "Total_Weight_g", "Grocery_Run"]
+            expected_fields = ["Dish", "Ingredient", "Grocery_Run", "Prep_Day", "Days_Served"]
             self.assertEqual(reader.fieldnames, expected_fields)
             rows = list(reader)
 
@@ -139,8 +139,10 @@ class TestWeeklyTweaks(unittest.TestCase):
         for r in thit_kho_rows:
             self.assertEqual(r["Prep_Day"], "Sunday")
             self.assertEqual(r["Grocery_Run"], "Saturday")
-            self.assertEqual(int(r["Portions"]), 3)
-            self.assertTrue(r["Total_Weight_g"].isdigit(), f"Non-integer weight: {r['Total_Weight_g']}")
+            self.assertEqual(r["Days_Served"], "Monday, Tuesday, Wednesday")
+            # Ingredient contains rounded grams and ingredient name
+            self.assertTrue(any(c.isdigit() for c in r["Ingredient"]))
+            self.assertNotIn(".0g", r["Ingredient"])
 
         # Check that Gà xào sả ớt is present with Wednesday prep and Wednesday run
         ga_xao_rows = [r for r in rows if "Gà Xào" in r["Dish"]]
@@ -148,8 +150,9 @@ class TestWeeklyTweaks(unittest.TestCase):
         for r in ga_xao_rows:
             self.assertEqual(r["Prep_Day"], "Wednesday")
             self.assertEqual(r["Grocery_Run"], "Wednesday")
-            self.assertEqual(int(r["Portions"]), 2)
-            self.assertTrue(r["Total_Weight_g"].isdigit(), f"Non-integer weight: {r['Total_Weight_g']}")
+            self.assertEqual(r["Days_Served"], "Thursday, Friday")
+            self.assertTrue(any(c.isdigit() for c in r["Ingredient"]))
+            self.assertNotIn(".0g", r["Ingredient"])
 
     def test_vegetable_and_fruit_macro_tracking(self):
         plan = generate_weekly_plan(self.profile, start_date="2026-10-10")
@@ -201,12 +204,22 @@ class TestWeeklyTweaks(unittest.TestCase):
             rows = list(reader)
 
         self.assertGreater(len(rows), 0)
-        valid_runs = {"Saturday", "Wednesday", "Pantry"}
+        valid_runs = ["Saturday", "Wednesday", "Pantry"]
         for r in rows:
             self.assertIn(r["Run"], valid_runs, f"Run column contains unexpected value: {r['Run']}")
             # Ensure no decimals in package size or planned grams
             self.assertNotIn(".0g", r["Package_Size"])
             self.assertNotIn(".1g", r["Quantity"])
+
+        # Verify strict grouping by [Run, Category]
+        # Categories within each run must be grouped together (no interleaved categories)
+        seen_run_cats = []
+        for r in rows:
+            run_cat = (r["Run"], r["Category"])
+            if not seen_run_cats or seen_run_cats[-1] != run_cat:
+                seen_run_cats.append(run_cat)
+        # Every (Run, Category) tuple must appear at most once in seen_run_cats
+        self.assertEqual(len(seen_run_cats), len(set(seen_run_cats)), f"Categories not grouped by [Run, Category]: {seen_run_cats}")
 
     def test_tool_configure_planning_schedule(self):
         tools_map = {t.__name__: t for t in get_agent_tools(data_dir=self.test_dir)}
@@ -220,4 +233,4 @@ class TestWeeklyTweaks(unittest.TestCase):
 
         # View batch cook list tool
         batch_summary = tools_map["tool_view_batch_cook_list"]()
-        self.assertIn("Dish,Prep_Day,Days_Served", batch_summary)
+        self.assertIn("Dish,Ingredient,Grocery_Run,Prep_Day,Days_Served", batch_summary)
