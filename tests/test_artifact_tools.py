@@ -128,3 +128,34 @@ class TestArtifactTools(unittest.TestCase):
         self.assertNotIn("Grocery_Run", rows[0])
         self.assertNotIn("Prep_Day", rows[0])
         self.assertNotIn("Days_Served", rows[0])
+
+    def test_update_grocery_list_post_processes_by_sorting_run_and_category(self):
+        disordered_items = [
+            {"Run": "Wednesday", "Category": "vegetable", "Item": "Broccoli", "Quantity_g": 300},
+            {"Run": "Saturday", "Category": "vegetable", "Item": "Bok Choy", "Quantity_g": 500},
+            {"Run": "Saturday", "Category": "meat", "Item": "Chicken Breast", "Quantity_g": 1000},
+            {"Run": "Wednesday", "Category": "meat", "Item": "Lean Beef", "Quantity_g": 400},
+            {"Run": "Saturday", "Category": "meat", "Item": "Beef Flank", "Quantity_g": 500},
+            {"Run": "Pantry", "Category": "supplement", "Item": "ON Whey", "Quantity_g": 900},
+        ]
+        res = update_grocery_list_csv(self.test_dir, disordered_items, mode="replace")
+        self.assertTrue(res["success"])
+
+        rows = get_grocery_list_csv(self.test_dir)
+        runs = [r["Run"] for r in rows]
+        sat_indices = [i for i, run in enumerate(runs) if run == "Saturday"]
+        wed_indices = [i for i, run in enumerate(runs) if run == "Wednesday"]
+        pantry_indices = [i for i, run in enumerate(runs) if run == "Pantry"]
+
+        # Saturday before Wednesday before Pantry
+        self.assertTrue(max(sat_indices) < min(wed_indices))
+        self.assertTrue(max(wed_indices) < min(pantry_indices))
+
+        # Check Category grouping within Saturday
+        sat_rows = [r for r in rows if r["Run"] == "Saturday"]
+        sat_categories = [r["Category"] for r in sat_rows]
+        seen_cats = []
+        for c in sat_categories:
+            if not seen_cats or seen_cats[-1] != c:
+                seen_cats.append(c)
+        self.assertEqual(len(seen_cats), len(set(seen_cats)))

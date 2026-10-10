@@ -232,6 +232,31 @@ def get_grocery_list_csv(
     return rows
 
 
+def _run_sort_key(run_str: str) -> tuple:
+    """Helper to sort grocery runs chronologically and logically."""
+    s = str(run_str).strip()
+    s_lower = s.lower()
+    # Check if starts with ISO date e.g. "2026-10-12" or "261012"
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", s)
+    if m:
+        return (0, m.group(1), s_lower)
+    day_order = {
+        "saturday": 1,
+        "sunday": 2,
+        "monday": 3,
+        "tuesday": 4,
+        "wednesday": 5,
+        "thursday": 6,
+        "friday": 7,
+    }
+    for day, order in day_order.items():
+        if day in s_lower:
+            return (1, order, s_lower)
+    if "pantry" in s_lower:
+        return (2, 99, s_lower)
+    return (3, s_lower, s_lower)
+
+
 def update_grocery_list_csv(
     data_dir: str,
     entries: list[dict],
@@ -328,6 +353,15 @@ def update_grocery_list_csv(
                 lookup[key] = len(existing) - 1
 
         clean_rows = [r for r in existing if r is not None]
+
+    # Post-process: sort by [Run, Category]
+    clean_rows.sort(
+        key=lambda r: (
+            _run_sort_key(r.get("Run", "")),
+            r.get("Category", "").lower(),
+            r.get("Item", "").lower()
+        )
+    )
 
     target_files = [path]
     root_file = os.path.join(data_dir, "grocery_list.csv")
