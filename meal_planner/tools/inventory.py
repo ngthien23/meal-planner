@@ -35,6 +35,33 @@ def load_inventory_state(data_dir: str) -> InventoryState:
     try:
         with open(inventory_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+
+        if not isinstance(data, dict):
+            return InventoryState(
+                last_reconciled_at=None,
+                carried_calories=0.0,
+                carried_protein_g=0.0,
+                items=[]
+            )
+
+        items = [
+            InventoryItem(
+                food_id=item["food_id"],
+                name=item.get("name", item["food_id"].replace("_", " ").title()),
+                quantity_g=float(item.get("quantity_g", 0.0)),
+                status=item.get("status", "actual"),
+                source=item.get("source", "user_report"),
+                purchased_date=item.get("purchased_date", "")
+            )
+            for item in data.get("items", [])
+        ]
+
+        return InventoryState(
+            last_reconciled_at=data.get("last_reconciled_at"),
+            carried_calories=float(data.get("carried_calories", 0.0)),
+            carried_protein_g=float(data.get("carried_protein_g", 0.0)),
+            items=items
+        )
     except Exception:
         return InventoryState(
             last_reconciled_at=None,
@@ -42,25 +69,6 @@ def load_inventory_state(data_dir: str) -> InventoryState:
             carried_protein_g=0.0,
             items=[]
         )
-
-    items = [
-        InventoryItem(
-            food_id=item["food_id"],
-            name=item.get("name", item["food_id"].replace("_", " ").title()),
-            quantity_g=float(item.get("quantity_g", 0.0)),
-            status=item.get("status", "actual"),
-            source=item.get("source", "user_report"),
-            purchased_date=item.get("purchased_date", "")
-        )
-        for item in data.get("items", [])
-    ]
-
-    return InventoryState(
-        last_reconciled_at=data.get("last_reconciled_at"),
-        carried_calories=float(data.get("carried_calories", 0.0)),
-        carried_protein_g=float(data.get("carried_protein_g", 0.0)),
-        items=items
-    )
 
 
 def save_inventory_state(data_dir: str, state: InventoryState) -> None:
@@ -112,9 +120,12 @@ def record_actual_stock(
         def is_meat_or_perishable(food_id: str) -> bool:
             if food_id in catalog_ingredients:
                 ing = catalog_ingredients[food_id]
-                return ing.category in ("meat", "seafood") or (ing.perishable and ing.category in ("meat", "seafood", "poultry"))
+                return bool(ing.perishable and (ing.category in ("meat", "seafood", "poultry") or "meat" in ing.category.lower()))
+            lower_id = food_id.lower()
+            if "canned" in lower_id or "dried" in lower_id:
+                return False
             keywords = ("chicken", "beef", "pork", "meat", "shrimp", "fish", "salmon", "turkey", "lamb", "steak", "thigh", "wing", "breast")
-            return any(k in food_id.lower() for k in keywords)
+            return any(k in lower_id for k in keywords)
 
         state.items = [
             item for item in state.items

@@ -72,14 +72,42 @@ class TestInventoryState(unittest.TestCase):
         loaded = load_inventory_state(self.test_dir)
         self.assertEqual(len(loaded.items), 3)
 
+    def test_load_malformed_inventory_returns_default_empty_state(self):
+        inv_path = os.path.join(self.test_dir, "inventory.json")
+
+        # Case 1: Corrupted / invalid JSON syntax
+        with open(inv_path, "w", encoding="utf-8") as f:
+            f.write("{ invalid json content ...")
+        state = load_inventory_state(self.test_dir)
+        self.assertIsNone(state.last_reconciled_at)
+        self.assertEqual(state.carried_calories, 0.0)
+        self.assertEqual(state.items, [])
+
+        # Case 2: JSON is valid syntax but unexpected top-level structure (e.g. list)
+        with open(inv_path, "w", encoding="utf-8") as f:
+            f.write("[\"not\", \"a\", \"dict\"]")
+        state = load_inventory_state(self.test_dir)
+        self.assertIsNone(state.last_reconciled_at)
+        self.assertEqual(state.carried_calories, 0.0)
+        self.assertEqual(state.items, [])
+
+        # Case 3: Items contain malformed schema (missing food_id or bad types)
+        with open(inv_path, "w", encoding="utf-8") as f:
+            f.write("{\"items\": [{\"bad_key\": 123}]}")
+        state = load_inventory_state(self.test_dir)
+        self.assertIsNone(state.last_reconciled_at)
+        self.assertEqual(state.carried_calories, 0.0)
+        self.assertEqual(state.items, [])
+
     def test_record_actual_stock_clears_unbought_run_meats(self):
-        # Initial state with an assumed perishable meat and an actual item
+        # Initial state with an assumed perishable meat, an assumed non-perishable item, and an actual item
         initial_state = InventoryState(
             last_reconciled_at="2026-10-10T12:00:00+02:00",
             carried_calories=0.0,
             carried_protein_g=0.0,
             items=[
                 InventoryItem("chicken_breast", "Chicken Breast Fillet", 1000.0, "assumed", "planned_run", "2026-10-10"),
+                InventoryItem("canned_tuna", "Canned Tuna in Brine (Drained)", 200.0, "assumed", "planned_run", "2026-10-10"),
                 InventoryItem("rolled_oats", "Rolled Oats", 500.0, "actual", "user_report", "2026-10-09"),
             ]
         )
@@ -95,6 +123,8 @@ class TestInventoryState(unittest.TestCase):
         item_ids = [item.food_id for item in state.items]
         # Assumed perishable chicken_breast should be removed
         self.assertNotIn("chicken_breast", item_ids)
+        # Assumed non-perishable canned_tuna should NOT be removed
+        self.assertIn("canned_tuna", item_ids)
         # Actual rolled oats should remain
         self.assertIn("rolled_oats", item_ids)
         # Actual chicken wings should be present
