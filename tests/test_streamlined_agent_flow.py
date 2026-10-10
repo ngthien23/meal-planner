@@ -140,3 +140,15 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         # Food items still in inventory
         inv2 = load_inventory_state(self.test_dir)
         self.assertTrue(any(i.quantity_g > 0 for i in inv2.items))
+
+    def test_agent_prompt_train_of_thought_and_guidelines(self):
+        from meal_planner.agent import build_system_instruction
+        prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
+        
+        # Verify 3-step meal planning train of thought
+        self.assertIn("Step 1: Consider the Budget", prompt)
+        self.assertIn("Step 2: Allocate the Budget by Roughly Balancing Needs and Preferences", prompt)
+        self.assertIn("Step 3: Be Aware of Nuances Relating to Nutrition Facts", prompt)
+        self.assertIn("Raw vs. cooked weight yields", prompt)
+        self.assertIn("Bone-in and skin-on vs. boneless and skinless", prompt)
+        self.assertIn("NO RIGID LOCAL NUTRITION OR PRICE BOOKKEEPING", prompt)

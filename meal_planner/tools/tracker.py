@@ -5,27 +5,9 @@ from typing import Optional
 from meal_planner.models import load_catalog
 
 def init_bookkeeping_artifacts(data_dir: str) -> None:
-    """Initializes prices.csv and meal_logs.csv with header rows and baseline seed data."""
+    """Initializes meal_logs.csv with header rows if missing."""
     os.makedirs(data_dir, exist_ok=True)
-    prices_path = os.path.join(data_dir, "prices.csv")
     logs_path = os.path.join(data_dir, "meal_logs.csv")
-
-    ingredients, _ = load_catalog()
-    today_str = datetime.now().strftime("%Y-%m-%d")
-
-    if not os.path.exists(prices_path):
-        with open(prices_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Date", "Item_ID", "Item_Name", "Store", "Unit_Price_EUR", "Unit_Type"])
-            for ing in ingredients.values():
-                writer.writerow([
-                    today_str,
-                    ing.id,
-                    ing.name,
-                    "Colruyt",
-                    f"{ing.unit_price_eur:.2f}",
-                    ing.unit_type
-                ])
 
     if not os.path.exists(logs_path):
         with open(logs_path, "w", newline="", encoding="utf-8") as f:
@@ -39,15 +21,18 @@ def record_price(
     price_eur: float,
     unit_type: str = "per_kg"
 ) -> None:
-    """Appends an observed unit price to prices.csv."""
-    init_bookkeeping_artifacts(data_dir)
+    """Appends an observed unit price to prices.csv if price tracking is used."""
+    os.makedirs(data_dir, exist_ok=True)
     prices_path = os.path.join(data_dir, "prices.csv")
     ingredients, _ = load_catalog()
     item_name = ingredients[item_id].name if item_id in ingredients else item_id
     today_str = datetime.now().strftime("%Y-%m-%d")
 
+    needs_header = not os.path.exists(prices_path)
     with open(prices_path, "a", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
+        if needs_header:
+            writer.writerow(["Date", "Item_ID", "Item_Name", "Store", "Unit_Price_EUR", "Unit_Type"])
         writer.writerow([
             today_str,
             item_id,

@@ -19,10 +19,11 @@ class TestTracker(unittest.TestCase):
 
     def test_price_tracking_and_analytics(self):
         init_bookkeeping_artifacts(self.test_dir)
-        self.assertTrue(os.path.exists(os.path.join(self.test_dir, "prices.csv")))
+        self.assertFalse(os.path.exists(os.path.join(self.test_dir, "prices.csv")))
         self.assertTrue(os.path.exists(os.path.join(self.test_dir, "meal_logs.csv")))
 
         record_price(self.test_dir, "chicken_breast", "Colruyt", 9.50, "per_kg")
+        self.assertTrue(os.path.exists(os.path.join(self.test_dir, "prices.csv")))
         log_meal_consumption(self.test_dir, {
             "date": "2026-10-10", "meal": "lunch", "recipe": "ga_xao_sa_ot",
             "adherence": "completed", "protein_cost_eur": 1.90, "calories": 650
