@@ -97,15 +97,16 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
 - You do NOT have any meal plans yet and this athlete is not yet onboarded.
 - YOUR IMMEDIATE PRIORITY IN THIS FIRST CHAT:
   1. Warmly welcome the user to their AI Meal & Grocery Planner.
-  2. Ask the user for their core preferences needed to calculate macros and generate their zero-waste weekly meal plan:
+  2. Ask the user for their core quantitative stats and qualitative eating preferences:
      - Current bodyweight in kg
      - Fitness goal (maintenance, lean_bulk, or cut)
      - Target daily calories (or let you calculate based on bodyweight and goal)
-     - Dietary restrictions, preferences, or allergies (if any, default none)
+     - Preferred protein intake (default ~2.2g per kg bodyweight)
+     - Qualitative eating preferences (e.g. "Prefer Vietnamese food, broth-based, noodle. Usually buys Thai jasmine rice", textures, favorite dishes)
      - Preferred timezone and currency (default: {user_timezone}, {currency_val})
-  3. Once the user replies with their preferences (or confirms details):
-     - Call `tool_onboard_user(...)` to persist their profile.
-     - Call `tool_generate_meal_plan()` to generate their zero-waste weekly plan, batch cook file, and split grocery list.
+  3. Once the user replies with their preferences:
+     - Call `tool_onboard_user(...)` with their stats, passing their qualitative preferences into `eating_preferences` (or call `tool_save_memory_note(..., tier='long_term')`).
+     - Call `tool_generate_meal_plan()` to generate their initial weekly plan.
      - Point the user to the newly generated plan file: {active_plan_csv}."""
 
     return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant for a powerlifting athlete.
@@ -170,6 +171,8 @@ MULTIMODAL PHOTO HANDLING (BILLS & MEALS):
 CORE ATHLETE RULES & PLANNING PRINCIPLES:
 1. YOU ARE THE PLANNER & CHEF:
    - You reason over athlete preferences, on-hand meat, cravings, and schedules to decide dishes and portions.
+   - Qualitative eating preferences (e.g. Vietnamese dishes, phở, bún, Thai jasmine rice, favorite foods, broth vs solid textures) are stored as natural text in Long-Term Memory (see ATHLETE MEMORY above), NOT hardcoded into JSON schemas. Follow and adapt to these natural memory notes when designing meals.
+   - When the athlete shares new eating habits or lasting preferences, save them to long-term memory via `tool_save_memory_note(note, tier='long_term')`.
    - You work directly with artifacts: read and update `{active_plan_csv}` with `tool_update_meal_plan` and `{active_grocery_csv}` with `tool_update_grocery_list`.
 2. ROUGH MACROS & EVEN STOCK PORTIONING:
    - Daily macronutrients are rough guidelines, NOT rigid decimal constraints!
@@ -221,14 +224,29 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         bodyweight_kg: float,
         goal_state: str,
         target_calories: float,
-        protein_multiplier: float,
-        fat_multiplier: float,
+        protein_multiplier: float = 2.2,
+        fat_multiplier: float = 1.0,
         week_start_day: str = "Saturday",
         weeks_ahead: int = 1,
         currency: str = "EUR",
-        restrictions: Optional[list[str]] = None
+        restrictions: Optional[list[str]] = None,
+        eating_preferences: Optional[str] = None
     ) -> str:
-        """Onboards the user, stores their timezone and dietary profile, and initializes bookkeeping files."""
+        """Onboards the user, stores their timezone and dietary profile, and initializes bookkeeping files.
+        
+        Args:
+            timezone: User timezone (e.g. 'Europe/Brussels').
+            bodyweight_kg: Current body weight in kg.
+            goal_state: 'lean_bulk', 'cut', or 'maintenance'.
+            target_calories: Daily calorie target.
+            protein_multiplier: Protein target in grams per kg bodyweight (default 2.2g/kg).
+            fat_multiplier: Fat target in grams per kg bodyweight (default 1.0g/kg).
+            week_start_day: Day starting the week (default 'Saturday').
+            weeks_ahead: Number of future weeks ahead to generate and retain (default 1).
+            currency: Preferred currency code ('EUR', 'USD', etc.).
+            restrictions: Optional specific dietary restrictions or allergies.
+            eating_preferences: Natural text describing eating habits and preferences (e.g. 'Prefer Vietnamese food, broth-based, noodle. Usually buys Thai jasmine rice') saved to long-term memory.
+        """
         # Validate calorie feasibility upfront
         try:
             calculate_daily_targets(bodyweight_kg, protein_multiplier, fat_multiplier, target_calories)
@@ -246,15 +264,17 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             "weeks_ahead": weeks_ahead,
             "currency": currency,
             "restrictions": restrictions if restrictions is not None else [],
+            "eating_preferences": eating_preferences,
             "is_onboarded": True
         })
         init_bookkeeping_artifacts(data_dir)
         PantryState.load(data_dir).save(data_dir)
+        prefs_msg = f" Long-term eating preferences recorded: '{eating_preferences}'." if eating_preferences else ""
         return (
             f"Profile created. Profile initialized successfully for {bodyweight_kg}kg ({goal_state}). "
             f"Timezone: {profile.timezone}. Calorie target: {target_calories:.0f} kcal. "
             f"Daily targets: {bodyweight_kg * protein_multiplier:.1f}g Protein, {bodyweight_kg * fat_multiplier:.1f}g Fat. "
-            f"Schedule: Week starts on {profile.week_start_day}, planning {profile.weeks_ahead} week(s) ahead."
+            f"Schedule: Week starts on {profile.week_start_day}, planning {profile.weeks_ahead} week(s) ahead.{prefs_msg}"
         )
 
     def tool_configure_planning_schedule(

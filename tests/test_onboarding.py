@@ -44,13 +44,26 @@ class TestOnboarding(unittest.TestCase):
             "goal_state": "lean_bulk",
             "target_calories": 2550.0,
             "protein_multiplier": 2.3,
-            "fat_multiplier": 1.0
+            "fat_multiplier": 1.0,
+            "eating_preferences": "Prefer Vietnamese food, broth-based, noodle. Usually buys Thai jasmine rice."
         })
         self.assertEqual(profile.bodyweight_kg, 65.0)
         self.assertEqual(profile.timezone, "Europe/Brussels")
         
-        # Verify persistence
+        # Verify persistence and lack of overkill texture fields
         loaded = load_user_profile(self.test_dir)
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.bodyweight_kg, 65.0)
         self.assertEqual(loaded.target_calories, 2550.0)
+
+        # Check raw json
+        import json
+        with open(os.path.join(self.test_dir, "profile.json"), "r", encoding="utf-8") as f:
+            raw_json = json.load(f)
+        self.assertNotIn("texture_rules", raw_json)
+        self.assertNotIn("batch_prep_days", raw_json)
+
+        # Check long term memory persistence
+        from meal_planner.tools.memory import MemoryManager
+        mem = MemoryManager(self.test_dir).get_context()
+        self.assertTrue(any("Vietnamese food" in note for note in mem["long_term"]))

@@ -88,30 +88,45 @@ def get_relative_datetime(
 from dataclasses import fields
 
 def init_user_profile(data_dir: str, profile_data: dict) -> UserProfile:
-    """Initializes and persists UserProfile to profile.json."""
+    """Initializes and persists UserProfile to profile.json, and saves qualitative eating preferences to long-term memory."""
     os.makedirs(data_dir, exist_ok=True)
     profile = UserProfile(
         timezone=profile_data.get("timezone", "UTC"),
         bodyweight_kg=float(profile_data.get("bodyweight_kg", 65.0)),
         goal_state=profile_data.get("goal_state", "lean_bulk"),
         target_calories=float(profile_data.get("target_calories", 2550.0)),
-        protein_multiplier=float(profile_data.get("protein_multiplier", 2.3)),
+        protein_multiplier=float(profile_data.get("protein_multiplier", 2.2)),
         fat_multiplier=float(profile_data.get("fat_multiplier", 1.0)),
         restrictions=profile_data.get("restrictions", []),
-        texture_rules=profile_data.get("texture_rules", {
-            "breakfast": "soft_or_liquid",
-            "lunch": "solid_batch",
-            "dinner": "broth_or_soft"
-        }),
-        batch_prep_days=profile_data.get("batch_prep_days", ["Sunday", "Wednesday"]),
         week_start_day=profile_data.get("week_start_day", "Saturday"),
         weeks_ahead=int(profile_data.get("weeks_ahead", 1)),
         currency=profile_data.get("currency", "EUR"),
         is_onboarded=bool(profile_data.get("is_onboarded", True))
     )
     profile_path = os.path.join(data_dir, "profile.json")
+    out_dict = {
+        "timezone": profile.timezone,
+        "bodyweight_kg": profile.bodyweight_kg,
+        "goal_state": profile.goal_state,
+        "target_calories": profile.target_calories,
+        "protein_multiplier": profile.protein_multiplier,
+        "fat_multiplier": profile.fat_multiplier,
+        "week_start_day": profile.week_start_day,
+        "weeks_ahead": profile.weeks_ahead,
+        "currency": profile.currency,
+        "is_onboarded": profile.is_onboarded
+    }
+    if profile.restrictions:
+        out_dict["restrictions"] = profile.restrictions
     with open(profile_path, "w", encoding="utf-8") as f:
-        json.dump(profile.__dict__, f, indent=2)
+        json.dump(out_dict, f, indent=2)
+
+    # Save qualitative eating preferences to long-term memory
+    eating_prefs = profile_data.get("eating_preferences")
+    if eating_prefs and isinstance(eating_prefs, str) and eating_prefs.strip():
+        from meal_planner.tools.memory import MemoryManager
+        MemoryManager(data_dir).add_note(eating_prefs.strip(), tier="long_term")
+
     return profile
 
 def load_user_profile(data_dir: str) -> Optional[UserProfile]:

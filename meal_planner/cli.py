@@ -156,14 +156,13 @@ def quick_setup_wizard(
             "bodyweight_kg": 0.0,
             "goal_state": "",
             "target_calories": 0.0,
-            "protein_multiplier": 2.0,
+            "protein_multiplier": 2.2,
             "fat_multiplier": 1.0,
             "restrictions": [],
-            "week_start_day": "Monday",
+            "week_start_day": "Saturday",
             "weeks_ahead": 1,
             "currency": "EUR",
-            "is_onboarded": False,
-            "texture_rules": {}
+            "is_onboarded": False
         }
         profile = init_user_profile(data_dir, profile_data)
     return profile

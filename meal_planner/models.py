@@ -50,19 +50,15 @@ class UserProfile:
     bodyweight_kg: float = 65.0
     goal_state: str = "lean_bulk"  # lean_bulk, cut, maintenance
     target_calories: float = 2550.0
-    protein_multiplier: float = 2.3
+    protein_multiplier: float = 2.2
     fat_multiplier: float = 1.0
     restrictions: list[str] = field(default_factory=list)
-    texture_rules: dict = field(default_factory=lambda: {
-        "breakfast": "soft_or_liquid",
-        "lunch": "solid_batch",
-        "dinner": "broth_or_soft"
-    })
-    batch_prep_days: list[str] = field(default_factory=lambda: ["Sunday", "Wednesday"])
     week_start_day: str = "Saturday"
     weeks_ahead: int = 1
     currency: str = "EUR"
     is_onboarded: bool = True
+    texture_rules: dict = field(default_factory=dict)
+    batch_prep_days: list[str] = field(default_factory=list)
 
 @dataclass
 class MealSlot:
