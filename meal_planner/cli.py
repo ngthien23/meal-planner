@@ -132,6 +132,9 @@ def quick_setup_wizard(
             entered_key = input_fn(prompt_str).strip()
             if entered_key:
                 save_env_api_key(entered_key)
+                if not entered_key.startswith("AIzaSy"):
+                    print("[!] Note: Standard permanent Gemini API keys start with 'AIzaSy' (from https://aistudio.google.com/app/apikey).")
+                    print("    If this is a temporary session token, it may expire after a short time.")
                 print("[OK] Saved API key.")
             elif not current_key:
                 print("No API key entered. You can set it later by running: meals --setup")
