@@ -372,18 +372,25 @@ def reconcile_inventory_state(
                         pkg_str = item_row.get("Package_Size", "")
 
                         qty_g = 0.0
-                        m_pkgs = re.search(r"(\d+)\s*x", qty_str)
-                        m_pkg_size = re.search(r"(\d+(?:\.\d+)?)\s*g", pkg_str)
-                        if m_pkgs and m_pkg_size:
-                            qty_g = float(m_pkgs.group(1)) * float(m_pkg_size.group(1))
-                        else:
-                            m_planned = re.search(r"\((\d+(?:\.\d+)?)\s*g", qty_str)
-                            if m_planned:
-                                qty_g = float(m_planned.group(1))
-                            elif m_pkg_size:
-                                qty_g = float(m_pkg_size.group(1))
+                        if "Quantity_g" in item_row and item_row.get("Quantity_g"):
+                            try:
+                                qty_g = float(item_row["Quantity_g"])
+                            except ValueError:
+                                qty_g = 0.0
+
+                        if qty_g <= 0.0:
+                            m_pkgs = re.search(r"(\d+)\s*x", qty_str)
+                            m_pkg_size = re.search(r"(\d+(?:\.\d+)?)\s*g", pkg_str)
+                            if m_pkgs and m_pkg_size:
+                                qty_g = float(m_pkgs.group(1)) * float(m_pkg_size.group(1))
                             else:
-                                qty_g = 500.0
+                                m_planned = re.search(r"\((\d+(?:\.\d+)?)\s*g", qty_str)
+                                if m_planned:
+                                    qty_g = float(m_planned.group(1))
+                                elif m_pkg_size:
+                                    qty_g = float(m_pkg_size.group(1))
+                                else:
+                                    qty_g = 500.0
 
                         food_id = None
                         for cat_id, cat_ing in catalog_ingredients.items():
@@ -607,23 +614,72 @@ def reconcile_past_meal_deviation(
     actual_calories: Optional[float] = None,
     actual_protein_g: Optional[float] = None,
     roll_over_difference: bool = True,
-    user_tz: str = "Europe/Brussels"
+    user_tz: str = "Europe/Brussels",
+    reference_dt: Optional[datetime] = None
 ) -> dict:
     """Reconciles a past meal deviation (e.g. skipped meal or eating out).
     
-    1. Locates the planned meal in active meal plans.
-    2. Restores each ingredient's quantity back into inventory.json (un-consumes it).
-       If the item exists, increments quantity_g; if not, adds it with status='actual'.
-    3. Logs the deviation to meal_logs.csv with appropriate adherence.
-    4. If roll_over_difference is True, adds the deficit to carried_calories and carried_protein_g.
-    
-    Returns a summary dictionary.
+    1. Checks idempotency: if slot was already logged as skipped or eaten out, does not re-add stock.
+    2. Checks cutoff: only restores stock if the meal's cutoff has elapsed (was deducted).
+    3. Locates the planned meal in active meal plans.
+    4. Restores each ingredient's quantity back into inventory.json (un-consumes it).
+    5. Logs the deviation to meal_logs.csv.
+    6. If roll_over_difference is True, adds deficit to carried_calories and carried_protein_g.
     """
     state = load_inventory_state(data_dir)
     try:
         catalog_ingredients, _ = load_catalog(data_dir=data_dir)
     except Exception:
         catalog_ingredients = {}
+
+    profile = load_user_profile(data_dir)
+    effective_tz = user_tz or (profile.timezone if profile else "Europe/Brussels")
+    tz = resolve_timezone(effective_tz)
+    ref_dt = reference_dt if reference_dt is not None else datetime.now(tz)
+    if ref_dt.tzinfo is None:
+        ref_dt = ref_dt.replace(tzinfo=tz)
+    else:
+        ref_dt = ref_dt.astimezone(tz)
+
+    # 1. Idempotency check against meal_logs.csv
+    logs_path = os.path.join(data_dir, "meal_logs.csv")
+    already_logged = False
+    if os.path.exists(logs_path):
+        try:
+            with open(logs_path, "r", encoding="utf-8") as f:
+                for r in csv.DictReader(f):
+                    if (r.get("Date", "").strip() == target_date and 
+                        r.get("Meal", "").strip().lower() == slot_name.strip().lower() and 
+                        r.get("Adherence", "").strip().lower() in ("skipped", "eat_out")):
+                        already_logged = True
+                        break
+        except Exception:
+            pass
+
+    if already_logged:
+        return {
+            "success": True,
+            "target_date": target_date,
+            "slot_name": slot_name.lower(),
+            "deviation_type": deviation_type,
+            "restored_items_count": 0,
+            "restored_items": [],
+            "carried_calories": state.carried_calories,
+            "carried_protein_g": state.carried_protein_g,
+            "message": f"{target_date} {slot_name.capitalize()} was already recorded as {deviation_type}."
+        }
+
+    # 2. Check if the meal cutoff has passed (if not, ingredients were never deducted!)
+    cutoffs = {"breakfast": time(10, 0), "lunch": time(14, 30), "dinner": time(21, 0)}
+    slot_l = slot_name.strip().lower()
+    is_past_cutoff = True
+    if slot_l in cutoffs:
+        try:
+            m_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+            cutoff_dt = datetime.combine(m_date, cutoffs[slot_l], tzinfo=tz)
+            is_past_cutoff = (ref_dt >= cutoff_dt)
+        except Exception:
+            is_past_cutoff = True
 
     planned_meal = _find_planned_meal(data_dir, target_date, slot_name, user_tz)
     if not planned_meal:
@@ -639,59 +695,60 @@ def reconcile_past_meal_deviation(
     planned_protein = float(planned_meal.get("P", 0.0) or 0.0)
     recipe_name = planned_meal.get("Recipe", "").strip() or slot_name.capitalize()
 
-    # 1. Restore home ingredients into inventory
-    ing_str = planned_meal.get("Ingredient", "")
-    pieces = [p.strip() for p in re.split(r"[;,]", ing_str) if p.strip()]
-
+    # 3. Restore home ingredients into inventory only if slot was past cutoff
     restored_items_count = 0
     restored_items = []
-    for piece in pieces:
-        m = re.match(r"^(\d+(?:\.\d+)?)\s*(?:g|ml)?\s*(?:raw(?:/dry)?\s*)?(.*?)$", piece, re.IGNORECASE)
-        if not m:
-            continue
-        qty_g = float(m.group(1))
-        raw_name = m.group(2).strip()
+    if is_past_cutoff:
+        ing_str = planned_meal.get("Ingredient", "")
+        pieces = [p.strip() for p in re.split(r"[;,]", ing_str) if p.strip()]
 
-        matched_item = _find_inventory_item(state.items, raw_name, catalog_ingredients)
-        if matched_item:
-            matched_item.quantity_g = round(matched_item.quantity_g + qty_g, 2)
-            matched_item.status = "actual"
-            matched_item.source = "user_report"
-            restored_items_count += 1
-            restored_items.append({
-                "food_id": matched_item.food_id,
-                "name": matched_item.name,
-                "quantity_g": qty_g
-            })
-        else:
-            food_id = None
-            for cat_id, cat_ing in catalog_ingredients.items():
-                if cat_ing.name.lower() == raw_name.lower():
-                    food_id = cat_id
-                    break
-            if not food_id:
+        for piece in pieces:
+            m = re.match(r"^(\d+(?:\.\d+)?)\s*(?:g|ml)?\s*(?:raw(?:/dry)?\s*)?(.*?)$", piece, re.IGNORECASE)
+            if not m:
+                continue
+            qty_g = float(m.group(1))
+            raw_name = m.group(2).strip()
+
+            matched_item = _find_inventory_item(state.items, raw_name, catalog_ingredients)
+            if matched_item:
+                matched_item.quantity_g = round(matched_item.quantity_g + qty_g, 2)
+                matched_item.status = "actual"
+                matched_item.source = "user_report"
+                restored_items_count += 1
+                restored_items.append({
+                    "food_id": matched_item.food_id,
+                    "name": matched_item.name,
+                    "quantity_g": qty_g
+                })
+            else:
+                food_id = None
                 for cat_id, cat_ing in catalog_ingredients.items():
-                    if cat_ing.name.lower() in raw_name.lower() or raw_name.lower() in cat_ing.name.lower():
+                    if cat_ing.name.lower() == raw_name.lower():
                         food_id = cat_id
                         break
-            if not food_id:
-                food_id = raw_name.lower().replace(" ", "_").replace("-", "_")
+                if not food_id:
+                    for cat_id, cat_ing in catalog_ingredients.items():
+                        if cat_ing.name.lower() in raw_name.lower() or raw_name.lower() in cat_ing.name.lower():
+                            food_id = cat_id
+                            break
+                if not food_id:
+                    food_id = raw_name.lower().replace(" ", "_").replace("-", "_")
 
-            new_item = InventoryItem(
-                food_id=food_id,
-                name=raw_name,
-                quantity_g=round(qty_g, 2),
-                status="actual",
-                source="user_report",
-                purchased_date=target_date
-            )
-            state.items.append(new_item)
-            restored_items_count += 1
-            restored_items.append({
-                "food_id": food_id,
-                "name": raw_name,
-                "quantity_g": qty_g
-            })
+                new_item = InventoryItem(
+                    food_id=food_id,
+                    name=raw_name,
+                    quantity_g=round(qty_g, 2),
+                    status="actual",
+                    source="user_report",
+                    purchased_date=target_date
+                )
+                state.items.append(new_item)
+                restored_items_count += 1
+                restored_items.append({
+                    "food_id": food_id,
+                    "name": raw_name,
+                    "quantity_g": qty_g
+                })
 
     # 2. Log to meal_logs.csv and compute deficit
     dev_lower = deviation_type.strip().lower()

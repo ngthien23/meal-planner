@@ -211,3 +211,44 @@ class TestRetrospectiveAdjustments(unittest.TestCase):
         self.assertIsNotNone(item_after_catchup)
         # Quantity must NOT have been re-deducted
         self.assertEqual(item_after_catchup.quantity_g, restored_qty)
+
+    def test_reconcile_past_meal_deviation_is_idempotent(self):
+        state = InventoryState(last_reconciled_at="2026-10-10T12:00:00+02:00", items=[])
+        save_inventory_state(self.test_dir, state)
+
+        # First report
+        res1 = reconcile_past_meal_deviation(
+            self.test_dir, target_date="2026-10-10", slot_name="breakfast",
+            deviation_type="skipped", roll_over_difference=True, user_tz="Europe/Brussels"
+        )
+        self.assertTrue(res1["success"])
+        inv1 = load_inventory_state(self.test_dir)
+        initial_qty = sum(i.quantity_g for i in inv1.items)
+
+        # Second report of same skipped meal
+        res2 = reconcile_past_meal_deviation(
+            self.test_dir, target_date="2026-10-10", slot_name="breakfast",
+            deviation_type="skipped", roll_over_difference=True, user_tz="Europe/Brussels"
+        )
+        self.assertTrue(res2["success"])
+        inv2 = load_inventory_state(self.test_dir)
+        second_qty = sum(i.quantity_g for i in inv2.items)
+
+        # Stock must NOT be double-incremented
+        self.assertEqual(initial_qty, second_qty)
+
+    def test_reconcile_future_meal_does_not_restore_stock_before_cutoff(self):
+        state = InventoryState(last_reconciled_at="2026-10-10T09:00:00+02:00", items=[])
+        save_inventory_state(self.test_dir, state)
+
+        # Reporting dinner at 10:00 AM (dinner cutoff 21:00 has NOT passed yet)
+        res = reconcile_past_meal_deviation(
+            self.test_dir, target_date="2026-10-10", slot_name="dinner",
+            deviation_type="skipped", roll_over_difference=True, user_tz="Europe/Brussels",
+            reference_dt=datetime(2026, 10, 10, 10, 0, tzinfo=self.tz)
+        )
+        self.assertTrue(res["success"])
+        inv = load_inventory_state(self.test_dir)
+        # Because dinner cutoff hasn't passed, ingredients were never deducted, so 0 items should be restored to stock!
+        self.assertEqual(res["restored_items_count"], 0)
+        self.assertEqual(len(inv.items), 0)

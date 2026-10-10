@@ -92,3 +92,18 @@ class TestArtifactTools(unittest.TestCase):
         updated_groceries = get_grocery_list_csv(self.test_dir)
         self.assertEqual(len(updated_groceries), 2)
         self.assertEqual(updated_groceries[0]["Run"], "2026-10-13 Dynamic Run")
+
+    def test_merge_into_baseline_grocery_list_does_not_crash(self):
+        # Baseline grocery_list.csv has columns: Run, Category, Item, Quantity, Package_Size, Estimated_Price_EUR, Storage_Note
+        # Merging with Quantity_g must succeed and normalize fieldnames
+        update_items = [
+            {"Run": "Saturday Run", "Category": "meat", "Item": "Chicken Breast", "Quantity_g": 1200, "Estimated_Price_EUR": 11.40}
+        ]
+        res = update_grocery_list_csv(self.test_dir, update_items, mode="merge")
+        self.assertTrue(res["success"])
+
+        # Check updated grocery rows
+        groceries = get_grocery_list_csv(self.test_dir)
+        cb = next((g for g in groceries if "Chicken Breast" in g.get("Item", "") and g.get("Run") == "Saturday Run"), None)
+        self.assertIsNotNone(cb)
+        self.assertEqual(cb.get("Quantity_g"), "1200")

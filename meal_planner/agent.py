@@ -39,7 +39,8 @@ from meal_planner.tools.inventory import (
     save_inventory_state,
     record_actual_stock,
     reconcile_inventory_state,
-    reconcile_past_meal_deviation
+    reconcile_past_meal_deviation,
+    spread_missed_calories
 )
 from meal_planner.tools.artifacts import (
     get_meal_plan_csv,
@@ -526,7 +527,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         return f"Updated actual stock for: {', '.join(recorded)}. Inventory state saved."
 
     def tool_catch_up_inventory() -> str:
-        """Catches up inventory based on current local clock (Breakfast 08:00, Lunch 12:30, Dinner 19:00 cutoffs).
+        """Catches up inventory based on current local clock (Breakfast cutoff 10:00, Lunch cutoff 14:30, Dinner cutoff 21:00).
         
         Assumes past meals were eaten according to plan (unless logged as skipped/eaten out)
         and assumes scheduled grocery runs on or before today were completed.
@@ -569,6 +570,22 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             roll_over_difference=True
         )
         return res.get("message", "Processed past meal deviation.")
+
+    def tool_spread_missed_calories(
+        max_daily_calories: float = 200.0,
+        max_daily_protein_g: float = 15.0
+    ) -> str:
+        """Spreads accumulated carried calorie and protein deficits across upcoming days in the weekly meal plan.
+        
+        Capped at comfortable digestive limits (+200 kcal/day and +15g protein/day).
+        Automatically updates the meal plan CSV and deducts the distributed deficit from inventory.json.
+        """
+        res = spread_missed_calories(
+            data_dir,
+            max_daily_calories=max_daily_calories,
+            max_daily_protein_g=max_daily_protein_g
+        )
+        return res.get("message", "Processed deficit distribution.")
 
     def tool_get_macro_targets() -> str:
         """Returns the athlete's daily calorie and macronutrient guidelines.
@@ -633,7 +650,9 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             return "No grocery list found."
         lines = ["| Run | Category | Item | Quantity (g) | Est. Price (€) |", "|---|---|---|---|---|"]
         for r in rows:
-            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {r.get('Quantity_g')}g | €{r.get('Estimated_Price_EUR')} |")
+            qty_val = r.get("Quantity_g") or r.get("Quantity") or "0"
+            price_val = str(r.get("Estimated_Price_EUR", "0.00")).replace("€", "").strip()
+            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {qty_val}g | €{price_val} |")
         return "\n".join(lines)
 
     def tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str:
@@ -683,6 +702,36 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             return f"No ingredients matching '{query}' found in catalog."
         return f"Catalog Ingredients (matching '{query}'):\n" + "\n".join(results[:25])
 
+    def tool_view_grocery_list() -> str:
+        """Returns a summary of the current split grocery list."""
+        profile = load_user_profile(data_dir)
+        prefix = get_current_cycle_prefix(
+            profile.timezone if profile else "UTC",
+            week_start_day=profile.week_start_day if profile else "Saturday"
+        )
+        dated_grocery = os.path.join(data_dir, "plans", f"{prefix}_grocery_list.csv")
+        path = dated_grocery if os.path.exists(dated_grocery) else os.path.join(data_dir, "grocery_list.csv")
+        if not os.path.exists(path):
+            return "No grocery list CSV generated yet. Please generate a meal plan first."
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return "".join(lines[:15]) + ("\n... [remaining items in CSV]" if len(lines) > 15 else "")
+
+    def tool_view_batch_cook_list() -> str:
+        """Returns a summary of the batch-cooked dishes for the current week and their grocery requirements."""
+        profile = load_user_profile(data_dir)
+        prefix = get_current_cycle_prefix(
+            profile.timezone if profile else "UTC",
+            week_start_day=profile.week_start_day if profile else "Saturday"
+        )
+        dated_batch = os.path.join(data_dir, "plans", f"{prefix}_batch_cook.csv")
+        path = dated_batch if os.path.exists(dated_batch) else os.path.join(data_dir, "batch_cook.csv")
+        if not os.path.exists(path):
+            return "No batch cook CSV generated yet. Please generate a meal plan first."
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        return "".join(lines[:15]) + ("\n... [remaining items in CSV]" if len(lines) > 15 else "")
+
     return [
         tool_save_memory_note,
         tool_onboard_user,
@@ -692,6 +741,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         tool_update_on_hand_stock,
         tool_catch_up_inventory,
         tool_report_past_meal_deviation,
+        tool_spread_missed_calories,
         tool_get_macro_targets,
         tool_get_meal_plan,
         tool_update_meal_plan,
