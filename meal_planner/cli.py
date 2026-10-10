@@ -10,13 +10,22 @@ from meal_planner.tools.onboarding import load_user_profile, init_user_profile, 
 from meal_planner.tools.memory import MemoryManager
 from meal_planner.tools.meal_generator import ensure_weekly_plan_artifacts, get_current_cycle_prefix
 
-ENV_PATH = ".env"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_PATH = os.path.join(REPO_ROOT, ".env")
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(ENV_PATH)
 except ImportError:
     pass
+
+def resolve_data_dir(data_dir: str = "data") -> str:
+    """Resolves data_dir: anchors relative paths to REPO_ROOT unless another custom path is specified."""
+    if os.path.isabs(data_dir):
+        return data_dir
+    if data_dir == "data" or not os.path.exists(data_dir):
+        return os.path.join(REPO_ROOT, data_dir)
+    return os.path.abspath(data_dir)
 
 def get_model_name() -> str:
     """Returns the Gemini model to use, defaulting to gemini-3.8-flash."""
@@ -80,6 +89,7 @@ def quick_setup_wizard(
     """
     if input_fn is None:
         input_fn = input
+    data_dir = resolve_data_dir(data_dir)
     profile = load_user_profile(data_dir)
     if profile is not None and not force:
         return profile
@@ -221,6 +231,8 @@ def run_interactive_cli(data_dir: str = "data") -> None:
     print("=" * 70)
     print("  === AI Meal & Grocery Planner Agent (Gemini ADK) ===")
     print("=" * 70)
+
+    data_dir = resolve_data_dir(data_dir)
 
     # 1. Check or perform onboarding
     profile = load_user_profile(data_dir)
@@ -372,6 +384,8 @@ def serve_adk_playground(
     print("  === AI Meal & Grocery Planner Agent (Google ADK Playground) ===")
     print("=" * 70)
 
+    data_dir = resolve_data_dir(data_dir)
+
     # 1. API key verification
     ensure_api_key()
 
@@ -415,10 +429,10 @@ def serve_adk_playground(
         sys.executable, "-m", "google.adk.cli", "web",
         "--host", host,
         "--port", str(port),
-        "."
+        REPO_ROOT
     ]
     try:
-        subprocess.run(cmd)
+        subprocess.run(cmd, cwd=REPO_ROOT)
     except KeyboardInterrupt:
         print("\nADK Playground server shut down.")
 
@@ -426,6 +440,21 @@ def run_meals_shortcut(args: list[str] = None) -> None:
     """Main shortcut entry point: parses flags, ensures setup, opens browser, and serves ADK playground."""
     if args is None:
         args = sys.argv[1:]
+
+    if "-h" in args or "--help" in args:
+        print("""Usage: meals [OPTIONS]
+
+AI Meal & Grocery Planner Agent (Google ADK Playground).
+
+Options:
+  --help, -h       Show this help message and exit.
+  --setup          Run the interactive quick setup wizard.
+  --cli            Run in terminal CLI mode instead of web playground.
+  --no-browser     Do not automatically open the web browser.
+  --port=PORT      Port to serve the playground on (default: 8080).
+  --host=HOST      Host to bind to (default: 127.0.0.1).
+""")
+        return
 
     is_cli = "--cli" in args
     is_setup = "--setup" in args
@@ -446,6 +475,7 @@ def run_meals_shortcut(args: list[str] = None) -> None:
         elif not arg.startswith("--"):
             data_dir = arg
 
+    data_dir = resolve_data_dir(data_dir)
     profile = load_user_profile(data_dir)
     if profile is None or is_setup:
         profile = quick_setup_wizard(data_dir=data_dir, force=is_setup)
