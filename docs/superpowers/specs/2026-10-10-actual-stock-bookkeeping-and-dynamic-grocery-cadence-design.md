@@ -5,7 +5,7 @@ Athletes rarely shop and eat in rigid lockstep with a pre-generated weekly sched
 1. **On-hand Protein & Cravings:** An athlete already has protein at home (e.g. 500g chicken wings and 500g chicken thigh quarters) and has a spontaneous craving (e.g. "air fried chicken").
 2. **Flexible Grocery Timing:** When an athlete already has ample protein at home, forcing a rigid grocery run on Saturday and Wednesday leads to over-purchasing and spoiled food. Instead, food on hand must be eaten first, and the next grocery run should dynamically shift to the day when inventory runs out, maintaining a rolling 3–4 day freshness window from that point forward.
 3. **Passive Adherence & Batch Chat-Time Reconciliation:** Real-time 24/7 background timers are undesirable and fragile. Instead, whenever the user chats, the agent runs a **catch-up reconciliation**: assuming past planned runs were completed and past anchor meals were consumed according to plan.
-4. **Retrospective Corrections & Macro Catch-Up:** Athletes frequently report past events out-of-sync (e.g. at night: "this morning I skipped breakfast"). The system must retroactively un-consume those ingredients (putting them back into inventory), adjust macro totals, and proactively recommend catch-up actions (e.g. bedtime shake).
+4. **Retrospective Corrections & Macro Deficit Amortization:** Athletes frequently report past events out-of-sync (e.g. at night: "this morning I skipped breakfast"). If an athlete cannot comfortably eat a huge catch-up meal before bed, the remaining caloric difference can be rolled over and amortized gently across upcoming days/next week (capped at a digestible daily ceiling like +150 to +200 kcal/day) so meal volumes stay manageable.
 
 ---
 
@@ -25,34 +25,37 @@ Athletes rarely shop and eat in rigid lockstep with a pre-generated weekly sched
 3. **Retrospective Past Meal Corrections & Stock Restoration:**
    - Allow reporting deviations for past meals (e.g., "I skipped breakfast this morning").
    - Restores the unconsumed ingredients back into `inventory.json`.
-   - Recalculates the day's macro deficit and recommends remedial actions (e.g., bedtime double shake or extra snack).
-4. **Preferred Meal Windows & Next-Meal Craving Targeting:**
+   - Recalculates the day's macro deficit and recommends remedial actions (immediate bedtime snack vs. rollover).
+4. **Digestible Deficit Amortization Across Future Days:**
+   - If an unrecovered calorie/protein deficit remains at the end of the day (or the user chooses not to eat late at night), the deficit can be carried forward and spread evenly across the remaining days or next week's meal plan.
+   - Enforces a sensible daily buffer ceiling (maximum +150 to +200 kcal/day and +15g protein/day) to prevent stomach bloating and respect appetite limits.
+5. **Preferred Meal Windows & Next-Meal Craving Targeting:**
    - Anchor times: Breakfast @ 08:00 (cutoff 10:00), Lunch @ 12:30 (cutoff 14:30), Dinner @ 19:00 (cutoff 21:00).
    - A craving replaces the very next core meal relative to current local time (unless explicitly specified as an extra meal/snack).
    - Fits the requested dish into the schedule while calibrating ingredient raw weights to fulfill target macros.
-5. **Stock-First Exhaustion Engine (Lunch & Dinner):**
+6. **Stock-First Exhaustion Engine (Lunch & Dinner):**
    - Any remaining on-hand protein after the craving meal is scheduled into consecutive upcoming meals across **both lunch and dinner** until on-hand stock is 0g.
    - Respects dinner texture preference by preparing dinner as a broth/soup variation (e.g. Chicken Noodle Soup / Chicken Broth) while lunches can be solid/air-fried/batch prep.
-6. **Eating Out & Extra Snack Handling:**
+7. **Eating Out & Extra Snack Handling:**
    - Reporting an "eat out" meal logs nutritional macros/calories toward daily totals, but **does not** deduct home fridge/pantry stock.
    - Baseline is 3 core meals per day. Extra snacks/shakes reported by the user are added as additional slots without overwriting the 3 core meals.
-7. **Dynamic Floating Grocery Cadence:**
+8. **Dynamic Floating Grocery Cadence:**
    - Calculates the exact date of on-hand stock exhaustion ($D_{\text{exhaust}}$).
    - Prunes or cancels redundant grocery runs before $D_{\text{exhaust}}$.
    - Shifts the next fresh grocery run to $D_{\text{exhaust}}$, purchasing fresh meat for the subsequent 3–4 days (shelf-life limit), followed by subsequent runs at 3–4 day intervals to complete the planning window.
    - Updates batch cook prep dates to match the rescheduled grocery run day.
-8. **Full Artifact Synchronization:**
+9. **Full Artifact Synchronization:**
    - Updates `{prefix}_meal_plan.csv`, `{prefix}_batch_cook.csv`, and `{prefix}_grocery_list.csv` in place.
 
 ### Non-Goals
+- Forcing huge binge-eating catch-up meals that exceed the athlete's digestive comfort.
 - Real-time 24/7 daemon background workers or timers.
 - Requiring manual check-ins for every scheduled meal.
-- Real-time barcode or IoT smart fridge integration.
 
 ### Anti-Goals
+- Overloading single meals with excess food when compensating for past skipped calories.
 - Deducting home meat stock when the athlete eats out at a restaurant.
 - Leaving skipped meal ingredients marked as consumed instead of putting them back in the fridge.
-- Buying duplicate protein while on-hand meat sits in the fridge.
 
 ---
 
@@ -74,7 +77,11 @@ User Input (Any message / Craving / Retrospective deviation)
      ├─► Retrospective Report ("I skipped breakfast this morning"):
      │        - Restores breakfast ingredients to inventory.json
      │        - Updates today's logged macros
-     │        - Calculates deficit & recommends remediation (e.g., bedtime shake)
+     │        - Offers choice: immediate snack OR amortize deficit across upcoming days
+     │
+     ├─► Calorie Deficit Amortization:
+     │        - Distributes unrecovered deficit over next N days (capped at +200 kcal/day)
+     │        - Adjusts portion sizes in weekly meal_plan.csv accordingly
      │
      ├─► Eating Out ("I ate out for lunch"):
      │        - Restores planned lunch ingredients to inventory.json
@@ -97,6 +104,8 @@ Data structure stored in `data/inventory.json`:
 ```json
 {
   "last_reconciled_at": "2026-10-10T18:30:00+02:00",
+  "amortized_calorie_debt": 0.0,
+  "amortized_protein_debt_g": 0.0,
   "items": [
     {
       "food_id": "chicken_wings",
@@ -126,14 +135,19 @@ Data structure stored in `data/inventory.json`:
   - When user explicitly updates stock or logs unplanned shopping, items are saved with `status: "actual"`.
   - Reporting on-hand stock clears unbought assumed perishables from upcoming runs.
 
-### B. Retrospective Past Meal Handling & Remediation
-- Function `reconcile_past_meal_deviation(data_dir, target_date, slot_name, deviation_type, eaten_macros=None)`:
+### B. Retrospective Past Meal Handling & Deficit Amortization
+- Function `reconcile_past_meal_deviation(data_dir, target_date, slot_name, deviation_type, eaten_macros=None, amortize_debt=True)`:
   - If `deviation_type == "skipped"`:
     - Finds ingredients scheduled for that slot.
     - Re-adds their portion weights back to `inventory.json`!
     - Updates `meal_logs.csv` to record slot as skipped.
-    - Calculates remaining daily protein and calorie deficit.
-    - Generates concrete suggestion (e.g. "You are 35.0g protein and 420 kcal short today. Suggested fix: Drink a double whey shake (50g whey = 38g P, 200 kcal) before bed.").
+    - Calculates remaining daily protein and calorie deficit ($\Delta_{\text{cal}}$, $\Delta_{\text{prot}}$).
+    - If `amortize_debt=True` (or user cannot finish calories today):
+      - Saves remaining deficit to `amortized_calorie_debt` and `amortized_protein_debt_g` in `inventory.json`.
+      - Amortizes deficit across next 5–7 days with daily caps:
+        $$\Delta_{\text{daily\_cal}} = \min\left(200.0, \frac{\Delta_{\text{cal}}}{N}\right)$$
+        $$\Delta_{\text{daily\_prot}} = \min\left(15.0, \frac{\Delta_{\text{prot}}}{N}\right)$$
+      - Adjusts portion sizes in `{prefix}_meal_plan.csv` to seamlessly recoup the calories without meal bloat.
   - If `deviation_type == "eat_out"`:
     - Planned slot ingredients are restored to `inventory.json`.
     - Eaten out calories and protein are logged in `meal_logs.csv`.
@@ -196,9 +210,10 @@ def tool_report_past_meal_deviation(
     day_or_date: Optional[str] = None,  # Defaults to "today"
     eaten_description: Optional[str] = None,
     actual_calories: Optional[float] = None,
-    actual_protein_g: Optional[float] = None
+    actual_protein_g: Optional[float] = None,
+    amortize_to_future_days: bool = True
 ) -> str:
-    """Reconciles a past meal deviation, reverses assumed stock deductions to put unused food back in the fridge, and advises on macro catch-up."""
+    """Reconciles a past meal deviation, reverses assumed stock deductions to put unused food back in the fridge, and either advises on immediate catch-up or amortizes deficit across future days."""
 ```
 
 ### 3. `tool_log_unplanned_grocery_run`
@@ -213,7 +228,7 @@ def tool_log_unplanned_grocery_run(
 ### 4. `tool_view_inventory_stock`
 ```python
 def tool_view_inventory_stock() -> str:
-    """Displays current inventory separated into 'Actual Stock' (confirmed) and 'Assumed Stock' (from planned runs), plus reconciliation timestamp."""
+    """Displays current inventory separated into 'Actual Stock' (confirmed) and 'Assumed Stock' (from planned runs), reconciliation timestamp, and any active amortized calorie debt."""
 ```
 
 ---
@@ -221,7 +236,8 @@ def tool_view_inventory_stock() -> str:
 ## 6. Verification & Test Plan
 1. **Unit Tests:**
    - `test_chat_time_reconciliation_catchup`: Simulates elapsed days/hours and verifies past runs/meals are marked assumed consumed.
-   - `test_retrospective_skipped_meal_restores_stock`: Verifies reporting "skipped breakfast" restores ingredients back into `inventory.json` and calculates deficit advice.
+   - `test_retrospective_skipped_meal_restores_stock`: Verifies reporting "skipped breakfast" restores ingredients back into `inventory.json`.
+   - `test_calorie_debt_amortization_spread`: Verifies unrecovered calorie deficit is safely amortized across future days capped at +200 kcal/day.
    - `test_retrospective_eating_out_restores_stock`: Verifies eating out restores home ingredients while recording actual eaten calories/protein.
    - `test_preferred_anchor_windows`: Verifies 08:00 Breakfast, 12:30 Lunch, and 19:00 Dinner window cutoffs.
    - `test_stock_exhaustion_lunch_and_dinner_soup`: Verifies 500g wings + 500g thighs are consumed across consecutive lunch (solid) and dinner (chicken soup) slots until 0g remains.
