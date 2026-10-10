@@ -172,3 +172,58 @@ def export_meal_plan_csv(plan: WeeklyPlan, filepath: str) -> None:
                     "Carbs_g": slot.carbs_g,
                     "Calories": slot.calories
                 })
+
+def get_current_cycle_prefix(
+    tz_name: str = "UTC",
+    reference_dt: Optional[datetime] = None
+) -> str:
+    """Calculates the YYMMDD prefix for the Saturday cycle start date."""
+    from meal_planner.tools.onboarding import resolve_timezone
+    tz = resolve_timezone(tz_name)
+    now = reference_dt if reference_dt is not None else datetime.now(tz)
+    # Days since Saturday (Saturday=5, Sunday=6, Mon=0 ... Fri=4)
+    days_since_saturday = (now.weekday() - 5) % 7
+    cycle_sat = now - timedelta(days=days_since_saturday)
+    return cycle_sat.strftime("%y%m%d")
+
+def ensure_weekly_plan_artifacts(
+    profile: UserProfile,
+    data_dir: str,
+    reference_dt: Optional[datetime] = None
+) -> tuple[str, str, bool]:
+    """Ensures isolated weekly meal plan and grocery CSVs exist for the current week, creating if missing.
+    
+    Returns:
+        tuple[plan_path, grocery_path, newly_created]
+    """
+    from meal_planner.tools.onboarding import resolve_timezone
+    from meal_planner.tools.grocery_planner import PantryState, generate_split_groceries, export_grocery_list_csv
+
+    prefix = get_current_cycle_prefix(profile.timezone, reference_dt)
+    plans_dir = os.path.join(data_dir, "plans")
+    os.makedirs(plans_dir, exist_ok=True)
+
+    plan_path = os.path.join(plans_dir, f"{prefix}_meal_plan.csv")
+    grocery_path = os.path.join(plans_dir, f"{prefix}_grocery_list.csv")
+
+    if os.path.exists(plan_path) and os.path.exists(grocery_path):
+        return plan_path, grocery_path, False
+
+    tz = resolve_timezone(profile.timezone)
+    now = reference_dt if reference_dt is not None else datetime.now(tz)
+    days_since_saturday = (now.weekday() - 5) % 7
+    cycle_sat = now - timedelta(days=days_since_saturday)
+    start_date_str = cycle_sat.strftime("%Y-%m-%d")
+
+    plan = generate_weekly_plan(profile, start_date=start_date_str)
+    export_meal_plan_csv(plan, plan_path)
+
+    pantry = PantryState.load(data_dir)
+    groceries = generate_split_groceries(plan, pantry)
+    export_grocery_list_csv(groceries, grocery_path)
+
+    # Maintain latest root references for general viewer tools
+    export_meal_plan_csv(plan, os.path.join(data_dir, "meal_plan.csv"))
+    export_grocery_list_csv(groceries, os.path.join(data_dir, "grocery_list.csv"))
+
+    return plan_path, grocery_path, True
