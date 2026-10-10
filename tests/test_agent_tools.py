@@ -38,3 +38,17 @@ class TestAgentTools(unittest.TestCase):
         finally:
             if os.path.exists(test_dir):
                 shutil.rmtree(test_dir)
+
+    def test_model_name_resolution(self):
+        from meal_planner.cli import get_model_name
+        # Default should be gemini-3.8-flash
+        old_val = os.environ.pop("GEMINI_MODEL", None)
+        try:
+            self.assertEqual(get_model_name(), "gemini-3.8-flash")
+            os.environ["GEMINI_MODEL"] = "custom-model"
+            self.assertEqual(get_model_name(), "custom-model")
+        finally:
+            if old_val:
+                os.environ["GEMINI_MODEL"] = old_val
+            else:
+                os.environ.pop("GEMINI_MODEL", None)

@@ -10,6 +10,10 @@ try:
 except ImportError:
     pass
 
+def get_model_name() -> str:
+    """Returns the Gemini model to use, defaulting to gemini-3.8-flash."""
+    return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+
 def run_interactive_cli(data_dir: str = "data") -> None:
     """Runs the interactive Meal Planner agent terminal session."""
     print("=" * 70)
@@ -71,6 +75,7 @@ def run_interactive_cli(data_dir: str = "data") -> None:
     # Set up Gemini client if API key and library are present
     client = None
     chat = None
+    model_name = get_model_name()
     try:
         from google import genai
         from google.genai import types
@@ -82,8 +87,8 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                 tools=tools,
                 temperature=0.2
             )
-            chat = client.chats.create(model="gemini-2.5-flash", config=config)
-            print("🤖 Gemini Agent is active and ready!")
+            chat = client.chats.create(model=model_name, config=config)
+            print(f"🤖 Gemini Agent ({model_name}) is active and ready!")
     except Exception as e:
         print(f"Note: Gemini client initialization ({e}). Local fallback mode active.")
 
@@ -112,10 +117,16 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                 continue
 
             # Send to Gemini Chat session if active
+            handled_by_gemini = False
             if chat:
-                response = chat.send_message(user_input)
-                print(f"\nAgent > {response.text}\n")
-            else:
+                try:
+                    response = chat.send_message(user_input)
+                    print(f"\nAgent > {response.text}\n")
+                    handled_by_gemini = True
+                except Exception as e:
+                    print(f"\n⚠️  Gemini API error ({e}). Falling back to local execution.\n")
+
+            if not handled_by_gemini:
                 # Local fallback parser for key actions
                 lower = user_input.lower()
                 if "shake" in lower or "missed" in lower or "skip" in lower:
