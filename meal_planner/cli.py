@@ -43,6 +43,37 @@ def _open_browser_delayed(url: str, delay: float = 1.5) -> None:
     t = threading.Thread(target=_open, daemon=True)
     t.start()
 
+def save_env_api_key(api_key: str, env_path: str = ENV_PATH) -> None:
+    """Saves or updates GEMINI_API_KEY and GOOGLE_API_KEY in the .env file and process environment."""
+    os.environ["GEMINI_API_KEY"] = api_key
+    os.environ["GOOGLE_API_KEY"] = api_key
+    env_file = getattr(sys.modules[__name__], "ENV_PATH", env_path)
+    lines = []
+    if os.path.exists(env_file):
+        with open(env_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+    new_lines = []
+    found_gemini = False
+    found_google = False
+    for line in lines:
+        if line.startswith("GEMINI_API_KEY="):
+            new_lines.append(f"GEMINI_API_KEY={api_key}\n")
+            found_gemini = True
+        elif line.startswith("GOOGLE_API_KEY="):
+            new_lines.append(f"GOOGLE_API_KEY={api_key}\n")
+            found_google = True
+        else:
+            new_lines.append(line)
+
+    if not found_gemini:
+        new_lines.append(f"GEMINI_API_KEY={api_key}\n")
+    if not found_google:
+        new_lines.append(f"GOOGLE_API_KEY={api_key}\n")
+
+    with open(env_file, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
 def ensure_api_key(input_fn=None) -> str:
     """Checks for GEMINI_API_KEY or GOOGLE_API_KEY, prompts the user if missing, and optionally persists to .env."""
     if input_fn is None:
@@ -69,9 +100,7 @@ def ensure_api_key(input_fn=None) -> str:
     try:
         save = input_fn("Save this key to .env for future sessions? (y/N): ").strip().lower()
         if save in ["y", "yes"]:
-            env_path = getattr(sys.modules[__name__], "ENV_PATH", ".env")
-            with open(env_path, "a", encoding="utf-8") as f:
-                f.write(f"\nGEMINI_API_KEY={entered}\nGOOGLE_API_KEY={entered}\n")
+            save_env_api_key(entered)
             print("[OK] GEMINI_API_KEY and GOOGLE_API_KEY saved to .env file.")
     except (KeyboardInterrupt, EOFError):
         pass
@@ -83,7 +112,7 @@ def quick_setup_wizard(
     input_fn=None,
     force: bool = False
 ) -> UserProfile:
-    """Minimal quick setup wizard: only asks for API key if missing; the rest is handled by the agent in chat."""
+    """Quick setup wizard: prompts for API key if missing (or when force=True to edit/update)."""
     if input_fn is None:
         input_fn = input
     data_dir = resolve_data_dir(data_dir)
@@ -91,18 +120,21 @@ def quick_setup_wizard(
     if profile is not None and not force:
         return profile
 
-    # Only ask for API key if missing
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
-    if not api_key:
+    current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not current_key or force:
+        if current_key and force:
+            masked = current_key[:4] + "..." + current_key[-4:] if len(current_key) > 8 else "***"
+            prompt_str = f"Enter Gemini API key (press Enter to keep current [{masked}]): "
+        else:
+            prompt_str = "Enter Gemini API key: "
+
         try:
-            entered_key = input_fn("Enter Gemini API key (or press Enter to run offline): ").strip()
+            entered_key = input_fn(prompt_str).strip()
             if entered_key:
-                os.environ["GEMINI_API_KEY"] = entered_key
-                os.environ["GOOGLE_API_KEY"] = entered_key
-                env_file = getattr(sys.modules[__name__], "ENV_PATH", ".env")
-                with open(env_file, "a" if os.path.exists(env_file) else "w", encoding="utf-8") as f:
-                    f.write(f"\nGEMINI_API_KEY={entered_key}\nGOOGLE_API_KEY={entered_key}\n")
+                save_env_api_key(entered_key)
                 print("[OK] Saved API key.")
+            elif not current_key:
+                print("No API key entered. You can set it later by running: meals --setup")
         except (KeyboardInterrupt, EOFError):
             pass
 
@@ -115,21 +147,22 @@ def quick_setup_wizard(
     except Exception:
         pass
 
-    profile_data = {
-        "timezone": default_tz,
-        "bodyweight_kg": 0.0,
-        "goal_state": "",
-        "target_calories": 0.0,
-        "protein_multiplier": 2.0,
-        "fat_multiplier": 1.0,
-        "restrictions": [],
-        "week_start_day": "Monday",
-        "weeks_ahead": 1,
-        "currency": "EUR",
-        "is_onboarded": False,
-        "texture_rules": {}
-    }
-    profile = init_user_profile(data_dir, profile_data)
+    if profile is None:
+        profile_data = {
+            "timezone": default_tz,
+            "bodyweight_kg": 0.0,
+            "goal_state": "",
+            "target_calories": 0.0,
+            "protein_multiplier": 2.0,
+            "fat_multiplier": 1.0,
+            "restrictions": [],
+            "week_start_day": "Monday",
+            "weeks_ahead": 1,
+            "currency": "EUR",
+            "is_onboarded": False,
+            "texture_rules": {}
+        }
+        profile = init_user_profile(data_dir, profile_data)
     return profile
 
 
@@ -162,7 +195,7 @@ def run_interactive_cli(data_dir: str = "data") -> None:
         print(f"  - [Loaded] {label}: {path} ({elapsed_ms:.2f} ms)")
     print(f"[OK] Relevant context hydrated in {total_ms:.2f} ms.")
 
-    if profile:
+    if profile and profile.is_onboarded and profile.target_calories > 0:
         plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
         if newly_created:
             print(f"[*] Generated isolated weekly meal plan for this cycle: {plan_path}")
@@ -314,7 +347,7 @@ def serve_adk_playground(
         print(f"  - [Loaded] {label}: {path} ({elapsed_ms:.2f} ms)")
     print(f"[OK] Relevant context hydrated in {total_ms:.2f} ms.")
 
-    if profile and profile.is_onboarded:
+    if profile and profile.is_onboarded and profile.target_calories > 0:
         plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
         if newly_created:
             print(f"[*] Generated isolated weekly meal plan for this cycle: {plan_path}")
@@ -386,6 +419,9 @@ Options:
     profile = load_user_profile(data_dir)
     if profile is None or is_setup:
         profile = quick_setup_wizard(data_dir=data_dir, force=is_setup)
+        if is_setup:
+            print("\n[OK] Setup complete. Run 'meals' to launch the agent playground.")
+            return
 
     if is_cli:
         run_interactive_cli(data_dir=data_dir)

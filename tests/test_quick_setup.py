@@ -103,6 +103,18 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
             mock_open_delayed.assert_not_called()
             mock_subproc.assert_called_once()
 
+    @patch("meal_planner.cli.subprocess.run")
+    def test_run_meals_shortcut_setup_flag_runs_wizard_and_does_not_launch_server(self, mock_subproc):
+        """meals --setup should run setup wizard and exit without launching the ADK server."""
+        inputs = iter(["new-test-key"])
+        env_file = os.path.join(self.test_dir, ".env")
+        with patch("builtins.input", side_effect=lambda prompt="": next(inputs)), \
+             patch("meal_planner.cli.ENV_PATH", env_file), \
+             patch("meal_planner.cli._open_browser_delayed") as mock_open_delayed:
+            run_meals_shortcut(args=["--setup", self.test_dir])
+            mock_open_delayed.assert_not_called()
+            mock_subproc.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

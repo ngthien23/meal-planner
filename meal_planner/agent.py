@@ -480,7 +480,7 @@ def get_root_agent(data_dir: str = "data"):
     model_name = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
     profile = load_user_profile(data_dir)
     user_tz = profile.timezone if profile else "Europe/Brussels"
-    if profile:
+    if profile and profile.is_onboarded and profile.target_calories > 0:
         ensure_weekly_plan_artifacts(profile, data_dir)
     tools = get_agent_tools(data_dir)
 

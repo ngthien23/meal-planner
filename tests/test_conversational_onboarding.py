@@ -49,13 +49,28 @@ class TestConversationalOnboarding(unittest.TestCase):
             self.assertIn("my-secret-key-123", f.read())
 
     def test_quick_setup_wizard_skips_when_api_key_already_present(self):
-        """When API key is already in environment, quick setup wizard asks nothing and initializes un-onboarded profile."""
+        """When API key is already in environment on first launch, wizard asks nothing and initializes un-onboarded profile."""
         os.environ["GEMINI_API_KEY"] = "already-configured-key"
         mock_input = unittest.mock.MagicMock()
 
-        profile = quick_setup_wizard(data_dir=self.test_dir, input_fn=mock_input, force=True)
+        profile = quick_setup_wizard(data_dir=self.test_dir, input_fn=mock_input, force=False)
         mock_input.assert_not_called()
         self.assertFalse(profile.is_onboarded)
+
+    def test_quick_setup_wizard_allows_editing_api_key_when_forced(self):
+        """When force=True (e.g. meals --setup), wizard prompts to edit or update API key even if one is already present."""
+        os.environ["GEMINI_API_KEY"] = "old-key-123"
+        env_file = os.path.join(self.test_dir, ".env")
+        inputs = iter(["new-replacement-key-456"])
+
+        with patch("builtins.input", side_effect=lambda prompt="": next(inputs)), \
+             patch("meal_planner.cli.ENV_PATH", env_file):
+            profile = quick_setup_wizard(data_dir=self.test_dir, force=True)
+
+        self.assertIsNotNone(profile)
+        self.assertEqual(os.environ.get("GEMINI_API_KEY"), "new-replacement-key-456")
+        with open(env_file, "r", encoding="utf-8") as f:
+            self.assertIn("new-replacement-key-456", f.read())
 
     def test_system_instruction_first_chat_instructs_onboarding(self):
         """When athlete is not onboarded, system instruction guides the agent to ask preferences and generate plans."""
