@@ -54,6 +54,7 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
 
     profile = load_user_profile(data_dir)
     if profile:
+        ensure_weekly_plan_artifacts(profile, data_dir)
         profile_summary = (
             f"- Bodyweight: {profile.bodyweight_kg:.1f} kg | Goal: {profile.goal_state} | Target Calories: {profile.target_calories:.0f} kcal\n"
             f"- Daily Target Macros: Protein {profile.protein_multiplier * profile.bodyweight_kg:.1f}g ({profile.protein_multiplier:.1f}g/kg), "
@@ -87,7 +88,9 @@ CONVERSATION & COMMUNICATION POLICY (STRICT):
    - Be direct, concise, and focused. Only talk about the immediate changes or preferences at hand.
    - Do NOT provide unsolicited summaries or verbose filler.
 2. POINT TO THE ARTIFACT FILE:
-   - When asked about schedules, recipes, meal plans, or grocery lists (e.g. "what is my schedule for this week?"), POINT TO THE ARTIFACT FILE: {active_plan_csv}.
+   - When asked about schedules, recipes, meal plans, or grocery lists (e.g. "what is my schedule for this week?"):
+     - If the plan file exists on disk, POINT TO THE ARTIFACT FILE: {active_plan_csv}.
+     - If the plan file has not yet been generated, call `tool_generate_meal_plan` to generate it before answering.
    - ONLY print tabular meal rows or detailed lists directly in chat if the user explicitly asks you to ("print it here", "show me the plan", etc.).
 3. MEMORY RETENTION & DISCRIMINATION:
    - Actively record meaningful insights with `tool_save_memory_note(note, tier)`:
@@ -308,6 +311,8 @@ def get_root_agent(data_dir: str = "data"):
     model_name = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
     profile = load_user_profile(data_dir)
     user_tz = profile.timezone if profile else "Europe/Brussels"
+    if profile:
+        ensure_weekly_plan_artifacts(profile, data_dir)
     tools = get_agent_tools(data_dir)
 
     def dynamic_instruction(ctx=None) -> str:

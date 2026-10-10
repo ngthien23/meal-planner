@@ -189,7 +189,8 @@ def get_current_cycle_prefix(
 def ensure_weekly_plan_artifacts(
     profile: UserProfile,
     data_dir: str,
-    reference_dt: Optional[datetime] = None
+    reference_dt: Optional[datetime] = None,
+    force: bool = False
 ) -> tuple[str, str, bool]:
     """Ensures isolated weekly meal plan and grocery CSVs exist for the current week, creating if missing.
     
@@ -206,7 +207,7 @@ def ensure_weekly_plan_artifacts(
     plan_path = os.path.join(plans_dir, f"{prefix}_meal_plan.csv")
     grocery_path = os.path.join(plans_dir, f"{prefix}_grocery_list.csv")
 
-    if os.path.exists(plan_path) and os.path.exists(grocery_path):
+    if not force and os.path.exists(plan_path) and os.path.exists(grocery_path):
         return plan_path, grocery_path, False
 
     tz = resolve_timezone(profile.timezone)
