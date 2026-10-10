@@ -14,10 +14,40 @@ def get_model_name() -> str:
     """Returns the Gemini model to use, defaulting to gemini-3.8-flash."""
     return os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 
+def ensure_api_key(input_fn=input) -> str:
+    """Checks for GEMINI_API_KEY, prompts the user if missing, and optionally persists to .env."""
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if key:
+        return key
+
+    print("\n[*] No GEMINI_API_KEY detected in environment or .env file.")
+    print("A Gemini API key is needed for live conversational AI and dynamic reasoning.")
+    try:
+        entered = input_fn("Enter your Gemini API key (or press Enter to skip): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        return ""
+
+    if not entered:
+        print("Skipping API key setup. Running in local deterministic mode.")
+        return ""
+
+    os.environ["GEMINI_API_KEY"] = entered
+    try:
+        save = input_fn("Save this key to .env for future sessions? (y/N): ").strip().lower()
+        if save in ["y", "yes"]:
+            env_path = ".env"
+            with open(env_path, "a", encoding="utf-8") as f:
+                f.write(f"\nGEMINI_API_KEY={entered}\n")
+            print("[OK] GEMINI_API_KEY saved to .env file.")
+    except (KeyboardInterrupt, EOFError):
+        pass
+
+    return entered
+
 def run_interactive_cli(data_dir: str = "data") -> None:
     """Runs the interactive Meal Planner agent terminal session."""
     print("=" * 70)
-    print("  🏋️  AI Meal & Grocery Planner Agent (Gemini ADK)  🏋️")
+    print("  === AI Meal & Grocery Planner Agent (Gemini ADK) ===")
     print("=" * 70)
 
     # 1. Check or perform onboarding
@@ -26,7 +56,7 @@ def run_interactive_cli(data_dir: str = "data") -> None:
     tools_map = {t.__name__: t for t in tools}
 
     if not profile:
-        print("\n👋 Welcome! No athlete profile found. Let's do a quick onboarding setup.")
+        print("\n[Welcome] No athlete profile found. Let's do a quick onboarding setup.")
         try:
             tz_input = input("Enter your timezone (e.g. Europe/Brussels, UTC+2, America/New_York) [Europe/Brussels]: ").strip()
             tz_name = tz_input if tz_input else "Europe/Brussels"
@@ -46,13 +76,13 @@ def run_interactive_cli(data_dir: str = "data") -> None:
             fat_mult = input("Enter fat multiplier g/kg [1.0]: ").strip()
             f_mult = float(fat_mult) if fat_mult else 1.0
 
-            print("\n⚙️  Initializing your profile and local bookkeeping files...")
+            print("\n[Setup] Initializing your profile and local bookkeeping files...")
             init_msg = tools_map["tool_onboard_user"](tz_name, bw, goal, target_kcal, p_mult, f_mult)
-            print(f"✅ {init_msg}")
+            print(f"[OK] {init_msg}")
 
-            print("\n📋 Generating your initial weekly meal plan and split grocery list...")
+            print("\n[Plan] Generating your initial weekly meal plan and split grocery list...")
             plan_msg = tools_map["tool_generate_meal_plan"]()
-            print(f"✅ {plan_msg}")
+            print(f"[OK] {plan_msg}")
 
             profile = load_user_profile(data_dir)
         except (KeyboardInterrupt, EOFError):
@@ -62,11 +92,10 @@ def run_interactive_cli(data_dir: str = "data") -> None:
     user_tz = profile.timezone if profile else "Europe/Brussels"
     sys_instruction = build_system_instruction(user_tz)
 
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    # 2. Check and prompt for API key if missing
+    api_key = ensure_api_key()
     if not api_key:
-        print("\n⚠️  Notice: GEMINI_API_KEY environment variable is not set.")
-        print("To enable full Gemini agent conversation, set GEMINI_API_KEY=<your-key> in your environment or in a .env file.")
-        print("Running in local deterministic mode. Supported commands:")
+        print("\nRunning in local deterministic mode. Supported commands:")
         print("  /plan        - Re-generate and export meal plan & grocery CSVs")
         print("  /groceries   - View current split grocery list")
         print("  /analytics   - View protein spend & adherence analytics")
@@ -88,7 +117,7 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                 temperature=0.2
             )
             chat = client.chats.create(model=model_name, config=config)
-            print(f"🤖 Gemini Agent ({model_name}) is active and ready!")
+            print(f"[AI] Gemini Agent ({model_name}) is active and ready!")
     except Exception as e:
         print(f"Note: Gemini client initialization ({e}). Local fallback mode active.")
 
