@@ -27,55 +27,87 @@ from meal_planner.tools.adaptation import (
     apply_meal_deviation,
     apply_grocery_substitution
 )
+from meal_planner.tools.memory import MemoryManager
+from meal_planner.tools.meal_generator import (
+    generate_weekly_plan,
+    export_meal_plan_csv,
+    ensure_weekly_plan_artifacts,
+    get_current_cycle_prefix
+)
 
-def build_system_instruction(user_timezone: str = "UTC") -> str:
+def build_system_instruction(user_timezone: str = "UTC", data_dir: str = "data") -> str:
     """Builds the system instruction prompt for the Gemini meal planner agent."""
     tz = resolve_timezone(user_timezone)
     now_local = datetime.now(tz)
     now_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z")
     weekday_str = now_local.strftime("%A")
 
+    # Load memory context
+    mem_mgr = MemoryManager(data_dir)
+    mem_ctx = mem_mgr.get_context()
+    weekly_notes = "\n".join(f"  - [Weekly Note] {n}" for n in mem_ctx["weekly"]) or "  (None recorded for this week)"
+    long_term_notes = "\n".join(f"  - [Durable Fact] {n}" for n in mem_ctx["long_term"]) or "  (None recorded yet)"
+
+    prefix = get_current_cycle_prefix(user_timezone, now_local)
+    active_plan_csv = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
+    active_grocery_csv = os.path.join(data_dir, "plans", f"{prefix}_grocery_list.csv")
+
     return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, and financial assistant for a powerlifting athlete.
 
-CURRENT TEMPORAL CONTEXT:
+CURRENT TEMPORAL & ARTIFACT CONTEXT:
 - Local Time: {now_str} ({weekday_str})
 - Timezone: {user_timezone}
+- Active Cycle Prefix: {prefix} (Saturday-to-Friday)
+- Current Weekly Meal Plan Artifact: {active_plan_csv}
+- Current Weekly Grocery List Artifact: {active_grocery_csv}
 Always interpret relative temporal expressions ("today", "tonight", "tomorrow's lunch", "Thursday dinner") using this current local clock.
 
-CORE ATHLETE CONSTRAINTS & RULES:
-1. Texture & Fatigue Rules:
-   - Breakfast and Dinner MUST STRICTLY be soft, liquid, or broth-based (e.g. ON Whey smoothies, Phở with thinly sliced meat in hot broth) to prevent chewing fatigue.
-   - Lunch MUST STRICTLY be solid, savory, batch-cooked meals (e.g. Thịt kho tàu, Gà xào sả ớt with steamed jasmine rice).
-2. Dietary Bans:
-   - NO dairy milk (fortified soy milk only due to acne).
-   - NO non-Optimum Nutrition whey (digestive issues; ON Gold Standard Whey only).
-   - NO fresh tuna (canned tuna in brine only).
-3. Precision Raw Weights:
-   - All meal plans must specify raw/dry ingredient weights (e.g., "110g dry pho noodles", "200g raw lean beef"). Never cooked weights.
-4. Zero-Waste Logistics & Split Grocery Runs:
-   - The weekly plan runs Saturday through Friday.
-   - Perishable packages (like 1kg frozen shrimp) are split evenly across meals with 0% waste.
-   - Fresh meat cannot sit in the fridge > 48-72 hours. Shopping is strictly partitioned into:
-     - Saturday Run (for Sat/Sun meals, Sunday batch prep, Sat-Tue meats)
-     - Wednesday Run (for Wed batch prep, Wed-Fri meats)
-     - Pantry Restock (for bulk staples like 2.27kg whey tub when low)
+ATHLETE MEMORY:
+* Short-Term (Weekly):
+{weekly_notes}
 
-YOUR CAPABILITIES & TOOLS:
-- Onboard new users and record profile preferences (`tool_onboard_user`).
-- Generate weekly zero-waste meal plans and split grocery CSV artifacts (`tool_generate_meal_plan`).
-- Adapt to real-world friction (skipped dinner, extra shakes, grocery substitutions) in real time (`tool_report_meal_deviation`, `tool_substitute_ingredient`).
-- Track grocery unit prices and report trends (`tool_log_price_update`, `tool_get_analytics`).
+* Long-Term (Monthly/Yearly Durable Preferences & History):
+{long_term_notes}
 
-When a user chats with you:
-- Be concise, helpful, and athletic-focused.
-- If no profile exists yet, guide them warmly through onboarding.
-- Whenever plan changes occur, call the relevant tools so CSV artifacts stay up-to-date locally, and explain the changes conversationally.
+CONVERSATION & COMMUNICATION POLICY (STRICT):
+1. PRECISION & BREVITY:
+   - Be direct, concise, and focused. Only talk about the immediate changes or preferences at hand.
+   - Do NOT provide unsolicited summaries or verbose filler.
+2. POINT TO THE ARTIFACT FILE:
+   - When asked about schedules, recipes, meal plans, or grocery lists (e.g. "what is my schedule for this week?"), POINT TO THE ARTIFACT FILE: {active_plan_csv}.
+   - ONLY print tabular meal rows or detailed lists directly in chat if the user explicitly asks you to ("print it here", "show me the plan", etc.).
+3. MEMORY RETENTION & DISCRIMINATION:
+   - Actively record meaningful insights with `tool_save_memory_note(note, tier)`:
+     - Use tier='weekly' for temporary physical fatigue, temporary schedule shifts, or perishable roll-overs.
+     - Use tier='long_term' for permanent food intolerances, durable recipe preferences, or macro milestones.
+     - NEVER record trivial conversational chatter (e.g. "ok", "thank you", "sounds good", "hello").
+
+CORE ATHLETE RULES:
+1. Texture Rules: Breakfast & Dinner strictly soft/liquid/broth (smoothies, Phở); Lunch strictly solid batch (Thịt kho, Gà xào sả ớt).
+2. Dietary Bans: Fortified soy milk only (no dairy), ON Whey only, canned tuna only.
+3. Raw Weights: All recipes dictate raw/dry ingredient weights.
+4. Split Grocery Runs: Saturday Run (Sat-Tue meats + Sun batch prep); Wednesday Run (Wed-Fri meats + Wed batch prep). Meat fridge life <= 72h.
 """
 
 def get_agent_tools(data_dir: str = "data") -> list[Callable]:
     """Returns the suite of callable tools bound to the specified data directory."""
     # Active weekly plan cached in memory / disk
     plan_cache = {"plan": None}
+
+    def tool_save_memory_note(note: str, tier: str = "weekly") -> str:
+        """Saves an important conversational note into short-term (weekly) or long-term memory.
+        
+        Args:
+            note: Meaningful factual note or preference learned from user.
+            tier: 'weekly' for temporary weekly notes, or 'long_term' for permanent preferences.
+        """
+        mgr = MemoryManager(data_dir)
+        res = mgr.add_note(note, tier)
+        if res["status"] == "saved":
+            tier_label = "long-term" if res['tier'] == "long_term" else "weekly"
+            return f"Saved to {tier_label} memory: '{note}'."
+        else:
+            return f"Memory note ignored: {res.get('reason', 'trivial or duplicate')}."
 
     def tool_onboard_user(
         timezone: str,
@@ -109,25 +141,19 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         )
 
     def tool_generate_meal_plan() -> str:
-        """Generates the weekly zero-waste meal plan and split grocery list, exporting CSV artifacts."""
+        """Generates or updates the weekly zero-waste meal plan and split grocery list, exporting CSV artifacts."""
         profile = load_user_profile(data_dir)
         if not profile:
             return "Error: No user profile found. Please onboard first."
         
+        plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
         plan = generate_weekly_plan(profile)
         plan_cache["plan"] = plan
 
-        plan_csv = os.path.join(data_dir, "meal_plan.csv")
-        export_meal_plan_csv(plan, plan_csv)
-
-        pantry = PantryState.load(data_dir)
-        groceries = generate_split_groceries(plan, pantry)
-        grocery_csv = os.path.join(data_dir, "grocery_list.csv")
-        export_grocery_list_csv(groceries, grocery_csv)
-
+        status = "Generated new" if newly_created else "Active"
         return (
-            f"Generated 7-day meal plan (Saturday-Friday) and saved to {plan_csv}. "
-            f"Split grocery list (Saturday Run, Wednesday Run, Pantry Restock) saved to {grocery_csv}."
+            f"{status} weekly meal plan at {plan_path}. "
+            f"Split grocery list at {grocery_path}."
         )
 
     def tool_report_meal_deviation(
@@ -156,6 +182,10 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
 
         plan_csv = os.path.join(data_dir, "meal_plan.csv")
         export_meal_plan_csv(updated_plan, plan_csv)
+        prefix = get_current_cycle_prefix(profile.timezone)
+        dated_plan_csv = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
+        if os.path.exists(os.path.dirname(dated_plan_csv)):
+            export_meal_plan_csv(updated_plan, dated_plan_csv)
 
         # Log consumption to tracker
         log_meal_consumption(data_dir, {
@@ -171,7 +201,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             latest = updated_plan.rollover_items[-1]
             rollover_info = f" Perishable safety: {latest['name']} ({latest['raw_weight_g']}g) flagged for {latest['action']}."
 
-        return f"Adapted meal plan for {day} {meal}. CSV updated at {plan_csv}.{rollover_info}"
+        return f"Adapted meal plan for {day} {meal}. CSV updated at {dated_plan_csv if os.path.exists(dated_plan_csv) else plan_csv}.{rollover_info}"
 
     def tool_substitute_ingredient(
         original_id: str,
@@ -190,9 +220,13 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
 
         plan_csv = os.path.join(data_dir, "meal_plan.csv")
         export_meal_plan_csv(updated, plan_csv)
+        prefix = get_current_cycle_prefix(profile.timezone)
+        dated_plan_csv = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
+        if os.path.exists(os.path.dirname(dated_plan_csv)):
+            export_meal_plan_csv(updated, dated_plan_csv)
 
         record_price(data_dir, new_ingredient_id, "Colruyt", new_price_eur)
-        return f"Substituted {original_id} with {new_ingredient_id}. Recalibrated raw protein weights and updated {plan_csv}."
+        return f"Substituted {original_id} with {new_ingredient_id}. Recalibrated raw protein weights and updated {dated_plan_csv if os.path.exists(dated_plan_csv) else plan_csv}."
 
     def tool_log_price_update(
         ingredient_id: str,
@@ -214,7 +248,10 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
 
     def tool_view_grocery_list() -> str:
         """Returns a summary of the current split grocery list."""
-        path = os.path.join(data_dir, "grocery_list.csv")
+        profile = load_user_profile(data_dir)
+        prefix = get_current_cycle_prefix(profile.timezone if profile else "UTC")
+        dated_grocery = os.path.join(data_dir, "plans", f"{prefix}_grocery_list.csv")
+        path = dated_grocery if os.path.exists(dated_grocery) else os.path.join(data_dir, "grocery_list.csv")
         if not os.path.exists(path):
             return "No grocery list CSV generated yet. Please generate a meal plan first."
         with open(path, "r", encoding="utf-8") as f:
@@ -222,6 +259,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         return "".join(lines[:15]) + ("\n... [remaining items in CSV]" if len(lines) > 15 else "")
 
     return [
+        tool_save_memory_note,
         tool_onboard_user,
         tool_generate_meal_plan,
         tool_report_meal_deviation,

@@ -3,6 +3,8 @@ import sys
 from datetime import datetime
 from meal_planner.agent import get_agent_tools, build_system_instruction
 from meal_planner.tools.onboarding import load_user_profile, init_user_profile, resolve_timezone
+from meal_planner.tools.memory import MemoryManager
+from meal_planner.tools.meal_generator import ensure_weekly_plan_artifacts, get_current_cycle_prefix
 
 try:
     from dotenv import load_dotenv
@@ -90,15 +92,32 @@ def run_interactive_cli(data_dir: str = "data") -> None:
             return
 
     user_tz = profile.timezone if profile else "Europe/Brussels"
-    sys_instruction = build_system_instruction(user_tz)
 
-    # 2. Check and prompt for API key if missing
+    # 2. Blank-slate memory hydration & weekly plan check
+    print("\n[*] Hydrating memory & bookkeeping files from blank slate...")
+    mem_mgr = MemoryManager(data_dir)
+    records, total_ms = mem_mgr.hydrate()
+    for label, path, elapsed_ms in records:
+        print(f"  - [Loaded] {label}: {path} ({elapsed_ms:.2f} ms)")
+    print(f"[OK] Memory & artifacts hydrated in {total_ms:.2f} ms.")
+
+    if profile:
+        plan_path, grocery_path, newly_created = ensure_weekly_plan_artifacts(profile, data_dir)
+        if newly_created:
+            print(f"[*] Generated isolated weekly meal plan for this cycle: {plan_path}")
+        else:
+            print(f"[*] Active weekly meal plan artifact verified: {plan_path}")
+
+    sys_instruction = build_system_instruction(user_tz, data_dir=data_dir)
+
+    # 3. Check and prompt for API key if missing
     api_key = ensure_api_key()
     if not api_key:
         print("\nRunning in local deterministic mode. Supported commands:")
         print("  /plan        - Re-generate and export meal plan & grocery CSVs")
         print("  /groceries   - View current split grocery list")
         print("  /analytics   - View protein spend & adherence analytics")
+        print("  /memory      - View stored short-term and long-term notes")
         print("  /exit        - Exit the agent\n")
 
     # Set up Gemini client if API key and library are present
@@ -144,6 +163,22 @@ def run_interactive_cli(data_dir: str = "data") -> None:
             elif user_input == "/analytics":
                 print(tools_map["tool_get_analytics"]())
                 continue
+            elif user_input == "/memory":
+                ctx = mem_mgr.get_context()
+                print("\n[Weekly Memory]")
+                if ctx["weekly"]:
+                    for n in ctx["weekly"]:
+                        print(f"  - {n}")
+                else:
+                    print("  (Empty)")
+                print("\n[Long-term Memory]")
+                if ctx["long_term"]:
+                    for n in ctx["long_term"]:
+                        print(f"  - {n}")
+                else:
+                    print("  (Empty)")
+                print()
+                continue
 
             # Send to Gemini Chat session if active
             handled_by_gemini = False
@@ -153,12 +188,18 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                     print(f"\nAgent > {response.text}\n")
                     handled_by_gemini = True
                 except Exception as e:
-                    print(f"\n⚠️  Gemini API error ({e}). Falling back to local execution.\n")
+                    print(f"\n[!] Gemini API error ({e}). Falling back to local execution.\n")
 
             if not handled_by_gemini:
                 # Local fallback parser for key actions
                 lower = user_input.lower()
-                if "shake" in lower or "missed" in lower or "skip" in lower:
+                if "schedule" in lower or "what is my schedule" in lower or ("meal" in lower and "plan" in lower):
+                    prefix = get_current_cycle_prefix(user_tz)
+                    active_plan = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
+                    print(f"\nAgent > Your weekly meal plan is stored at: {active_plan}\n(Ask me explicitly to 'print the plan' if you wish to see all rows in chat).\n")
+                elif "print the plan" in lower or "show the plan" in lower:
+                    print(f"\nAgent > {tools_map['tool_generate_meal_plan']()}\n")
+                elif "shake" in lower or "missed" in lower or "skip" in lower:
                     res = tools_map["tool_report_meal_deviation"](
                         "Thursday", "dinner", "Double Whey Shake", 50.0, 300.0
                     )
