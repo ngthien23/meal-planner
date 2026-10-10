@@ -98,10 +98,11 @@ def apply_grocery_substitution(
     plan: WeeklyPlan,
     original_id: str,
     sub_id: str,
-    new_price_eur: float
+    new_price_eur: float,
+    data_dir: Optional[str] = None
 ) -> WeeklyPlan:
     """Substitutes an ingredient across the weekly plan and recalculates raw weights and macros."""
-    ingredients_catalog, _ = load_catalog()
+    ingredients_catalog, _ = load_catalog(data_dir=data_dir)
     sub_ing = ingredients_catalog.get(sub_id)
     if not sub_ing:
         return plan

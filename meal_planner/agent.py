@@ -102,16 +102,24 @@ CONVERSATION & COMMUNICATION POLICY (STRICT):
      - Use tier='weekly' for temporary physical fatigue, temporary schedule shifts, or perishable roll-overs.
      - Use tier='long_term' for permanent food intolerances, durable recipe preferences, or macro milestones.
      - NEVER record trivial conversational chatter (e.g. "ok", "thank you", "sounds good", "hello").
+4. NEW FOOD DETECTION & CONFIRMATION (STRICT):
+   - When the user mentions a new food/ingredient (from conversation updates, shopping, or receipts/bills) not currently in the catalog:
+     - DO NOT add it immediately or silently.
+     - FIRST, explicitly ask the user for confirmation:
+       "I found a new food: [Food Name] ([Category], ~[Protein]g P / [Carbs]g C / [Fat]g F, ~[Calories] kcal per 100g, €[Price] per [Package Size]). Would you like me to add this to your food catalog?"
+     - ONLY after the user confirms (e.g. "yes", "add it", "sure", or clarifies details), call `tool_add_food_item` to save it to the catalog and prices.csv.
 
 MULTIMODAL PHOTO HANDLING (BILLS & MEALS):
 1. GROCERY BILLS / RECEIPT PHOTOS:
    - When the user uploads a photo of a store bill or receipt:
      - Detect the store name (e.g. Colruyt, Delhaize, Albert Heijn) and date.
-     - Extract prices for athlete protein and staple ingredients (chicken breast, pork shoulder, flank steak, eggs, shrimp, soy milk, rice).
-     - Calculate unit price (€/kg or €/unit).
-     - Invoke `tool_log_price_update(ingredient_id, price_eur, store)` for matched items.
+     - Extract prices for athlete protein and staple ingredients.
+     - If the item is already in the catalog, invoke `tool_log_price_update(ingredient_id, price_eur, store)`.
+     - If the receipt contains a NEW food not currently recognized:
+       - State that a new food was detected with estimated macros and price, and ask the user for confirmation to add it.
+       - After user confirms, call `tool_add_food_item`.
      - If the user bought a substitution, call `tool_substitute_ingredient`.
-     - Respond concisely with the prices logged and updated spend totals.
+     - Respond concisely with the prices logged and spend totals.
 2. MEAL CONSUMPTION PHOTOS:
    - When the user uploads a photo of a meal, plate, or shake:
      - Identify the ingredients and estimate the protein (g) and calorie content from portion sizes.
@@ -293,7 +301,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         if plan_cache["plan"] is None:
             plan_cache["plan"] = generate_weekly_plan(profile)
 
-        updated = apply_grocery_substitution(plan_cache["plan"], original_id, new_ingredient_id, new_price_eur)
+        updated = apply_grocery_substitution(plan_cache["plan"], original_id, new_ingredient_id, new_price_eur, data_dir=data_dir)
         plan_cache["plan"] = updated
 
         plan_csv = os.path.join(data_dir, "meal_plan.csv")
@@ -354,6 +362,71 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             lines = f.readlines()
         return "".join(lines[:15]) + ("\n... [remaining items in CSV]" if len(lines) > 15 else "")
 
+    def tool_add_food_item(
+        name: str,
+        category: str,
+        protein_per_100g: float,
+        fat_per_100g: float = 0.0,
+        carbs_per_100g: float = 0.0,
+        calories_per_100g: float = 0.0,
+        package_size_g: float = 500.0,
+        unit_price_eur: float = 1.99,
+        perishable: bool = True,
+        unit_type: str = "per_pack",
+        store: str = "Colruyt"
+    ) -> str:
+        """Adds a new food item to the catalog and logs its price into prices.csv.
+        
+        Call this tool AFTER confirming with the user that they want to add the newly found food.
+        
+        Args:
+            name: Human-readable name of the food (e.g. 'Skim Skyr', 'Cottage Cheese', 'Frozen Edamame').
+            category: Food category ('dairy', 'dairy_alternative', 'meat', 'seafood', 'vegetable', 'fruit', 'grains', 'pantry', 'supplement').
+            protein_per_100g: Protein in grams per 100g.
+            fat_per_100g: Fat in grams per 100g.
+            carbs_per_100g: Carbohydrates in grams per 100g.
+            calories_per_100g: Total calories per 100g (calculated automatically if 0).
+            package_size_g: Total weight or volume per package in grams (e.g. 500.0).
+            unit_price_eur: Price per package in EUR.
+            perishable: True if refrigerated/fresh perishable food, False if shelf-stable pantry item.
+            unit_type: Package descriptor (e.g. 'per_pack', 'per_tub', 'per_kg', 'per_bottle').
+            store: Store where item was purchased or observed (default 'Colruyt').
+        """
+        import re
+        from meal_planner.models import Ingredient, add_ingredient_to_catalog
+        
+        clean_id = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+        if not clean_id:
+            clean_id = "custom_food"
+
+        calc_kcal = calories_per_100g
+        if calc_kcal <= 0:
+            calc_kcal = round(protein_per_100g * 4.0 + carbs_per_100g * 4.0 + fat_per_100g * 9.0, 1)
+
+        new_ingredient = Ingredient(
+            id=clean_id,
+            name=name,
+            category=category.lower(),
+            protein_per_100g=round(float(protein_per_100g), 1),
+            fat_per_100g=round(float(fat_per_100g), 1),
+            carbs_per_100g=round(float(carbs_per_100g), 1),
+            calories_per_100g=round(float(calc_kcal), 1),
+            package_size_g=round(float(package_size_g), 1),
+            unit_price_eur=round(float(unit_price_eur), 2),
+            perishable=bool(perishable),
+            unit_type=unit_type
+        )
+
+        add_ingredient_to_catalog(new_ingredient, data_dir=data_dir)
+        record_price(data_dir, clean_id, store, float(unit_price_eur), unit_type)
+
+        return (
+            f"Added '{name}' (ID: {clean_id}) to catalog under {category.capitalize()}. "
+            f"Macros per 100g: {protein_per_100g:.1f}g P, {carbs_per_100g:.1f}g C, {fat_per_100g:.1f}g F ({calc_kcal:.0f} kcal). "
+            f"Package: {int(round(package_size_g))}g, €{unit_price_eur:.2f} at {store}. "
+            f"Logged to prices.csv and ready for meal planning & substitutions."
+        )
+
     return [
         tool_save_memory_note,
         tool_onboard_user,
@@ -364,7 +437,8 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         tool_log_price_update,
         tool_get_analytics,
         tool_view_grocery_list,
-        tool_view_batch_cook_list
+        tool_view_batch_cook_list,
+        tool_add_food_item
     ]
 
 def get_root_agent(data_dir: str = "data"):

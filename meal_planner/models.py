@@ -85,7 +85,10 @@ class WeeklyPlan:
     days: list[DayPlan]
     rollover_items: list[dict] = field(default_factory=list)
 
-def load_catalog(catalog_dir: Optional[str] = None) -> tuple[dict[str, Ingredient], dict[str, Recipe]]:
+def load_catalog(
+    catalog_dir: Optional[str] = None,
+    data_dir: Optional[str] = None
+) -> tuple[dict[str, Ingredient], dict[str, Recipe]]:
     if catalog_dir is None:
         catalog_dir = os.path.join(os.path.dirname(__file__), "catalog")
 
@@ -97,6 +100,22 @@ def load_catalog(catalog_dir: Optional[str] = None) -> tuple[dict[str, Ingredien
     with open(rec_path, "r", encoding="utf-8") as f:
         rec_data = json.load(f)
 
+    # Check for custom ingredients in data_dir (or default 'data' if exists)
+    custom_paths = []
+    if data_dir:
+        custom_paths.append(os.path.join(data_dir, "custom_ingredients.json"))
+    if os.path.exists(os.path.join("data", "custom_ingredients.json")) and data_dir != "data":
+        custom_paths.append(os.path.join("data", "custom_ingredients.json"))
+
+    for cp in custom_paths:
+        if os.path.exists(cp):
+            try:
+                with open(cp, "r", encoding="utf-8") as f:
+                    custom_data = json.load(f)
+                    ing_data.update(custom_data)
+            except Exception:
+                pass
+
     ingredients = {
         item_id: Ingredient(**data)
         for item_id, data in ing_data.items()
@@ -106,3 +125,32 @@ def load_catalog(catalog_dir: Optional[str] = None) -> tuple[dict[str, Ingredien
         for rec_id, data in rec_data.items()
     }
     return ingredients, recipes
+
+def add_ingredient_to_catalog(
+    ingredient: Ingredient,
+    catalog_dir: Optional[str] = None,
+    data_dir: Optional[str] = None
+) -> None:
+    """Persists a new or updated ingredient to data_dir custom_ingredients.json (if provided) and/or catalog_dir."""
+    if data_dir:
+        os.makedirs(data_dir, exist_ok=True)
+        custom_path = os.path.join(data_dir, "custom_ingredients.json")
+        custom_data = {}
+        if os.path.exists(custom_path):
+            with open(custom_path, "r", encoding="utf-8") as f:
+                try:
+                    custom_data = json.load(f)
+                except Exception:
+                    custom_data = {}
+        custom_data[ingredient.id] = ingredient.__dict__
+        with open(custom_path, "w", encoding="utf-8") as f:
+            json.dump(custom_data, f, indent=2)
+
+    if catalog_dir:
+        ing_path = os.path.join(catalog_dir, "ingredients.json")
+        if os.path.exists(ing_path):
+            with open(ing_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data[ingredient.id] = ingredient.__dict__
+            with open(ing_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
