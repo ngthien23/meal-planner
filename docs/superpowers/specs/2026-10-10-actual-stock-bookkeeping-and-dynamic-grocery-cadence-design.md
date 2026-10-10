@@ -3,8 +3,9 @@
 ## 1. Intent & Context
 Athletes rarely shop and eat in rigid lockstep with a pre-generated weekly schedule. Real life introduces common variations:
 1. **On-hand Protein & Cravings:** An athlete already has protein at home (e.g. 500g chicken wings and 500g chicken thigh quarters) and has a spontaneous craving (e.g. "air fried chicken").
-2. **Flexible Grocery Timing:** When an athlete already has ample protein at home, forcing a rigid grocery run on Saturday and Wednesday leads to over-purchasing and spoiled food. Instead, food on hand must be eaten first, and the next grocery run dynamically shifts to the day when inventory runs out, maintaining a rolling 3–4 day freshness window from that point forward.
-3. **Passive Adherence & Schedule Anchors:** Logging every meal is tedious. Past meals are assumed eaten according to plan unless reported otherwise. Preferred anchor times are Breakfast @ 08:00, Lunch @ 12:30, and Dinner @ 19:00. Eating out tracks calories/protein without deducting fridge stock. Baseline days consist of 3 core meals, while supporting optional extra snacks.
+2. **Flexible Grocery Timing:** When an athlete already has ample protein at home, forcing a rigid grocery run on Saturday and Wednesday leads to over-purchasing and spoiled food. Instead, food on hand must be eaten first, and the next grocery run should dynamically shift to the day when inventory runs out, maintaining a rolling 3–4 day freshness window from that point forward.
+3. **Passive Adherence & Batch Chat-Time Reconciliation:** Real-time 24/7 background timers are undesirable and fragile. Instead, whenever the user chats, the agent runs a **catch-up reconciliation**: assuming past planned runs were completed and past anchor meals were consumed according to plan.
+4. **Retrospective Corrections & Macro Catch-Up:** Athletes frequently report past events out-of-sync (e.g. at night: "this morning I skipped breakfast"). The system must retroactively un-consume those ingredients (putting them back into inventory), adjust macro totals, and proactively recommend catch-up actions (e.g. bedtime shake).
 
 ---
 
@@ -16,69 +17,75 @@ Athletes rarely shop and eat in rigid lockstep with a pre-generated weekly sched
    - Any actual stock reported by the user immediately supersedes assumed stock.
    - When an athlete reports on-hand stock before completing a planned grocery run, unbought perishable meats from that run are automatically removed.
    - Out-of-plan grocery purchases reported by the user are immediately recorded as `actual` stock and integrated into the plan.
-2. **Implicit Consumption by Time-of-Day:**
-   - If no meal log or deviation is submitted, past meal slots relative to current local time are assumed consumed according to the plan, and inventory is automatically decremented.
-3. **Preferred Meal Windows & Next-Meal Craving Targeting:**
+2. **Chat-Time State Reconciliation (Catch-Up):**
+   - At conversation turn time, compare `last_reconciled_at` against current local time.
+   - Advance assumed grocery purchases for runs $\le$ today.
+   - Advance assumed meal consumption for meal slots whose cutoff has passed, deducting ingredients from inventory.
+   - Record `last_reconciled_at = now`.
+3. **Retrospective Past Meal Corrections & Stock Restoration:**
+   - Allow reporting deviations for past meals (e.g., "I skipped breakfast this morning").
+   - Restores the unconsumed ingredients back into `inventory.json`.
+   - Recalculates the day's macro deficit and recommends remedial actions (e.g., bedtime double shake or extra snack).
+4. **Preferred Meal Windows & Next-Meal Craving Targeting:**
    - Anchor times: Breakfast @ 08:00 (cutoff 10:00), Lunch @ 12:30 (cutoff 14:30), Dinner @ 19:00 (cutoff 21:00).
    - A craving replaces the very next core meal relative to current local time (unless explicitly specified as an extra meal/snack).
    - Fits the requested dish into the schedule while calibrating ingredient raw weights to fulfill target macros.
-4. **Stock-First Exhaustion Engine (Lunch & Dinner):**
+5. **Stock-First Exhaustion Engine (Lunch & Dinner):**
    - Any remaining on-hand protein after the craving meal is scheduled into consecutive upcoming meals across **both lunch and dinner** until on-hand stock is 0g.
    - Respects dinner texture preference by preparing dinner as a broth/soup variation (e.g. Chicken Noodle Soup / Chicken Broth) while lunches can be solid/air-fried/batch prep.
-5. **Eating Out & Extra Snack Handling:**
+6. **Eating Out & Extra Snack Handling:**
    - Reporting an "eat out" meal logs nutritional macros/calories toward daily totals, but **does not** deduct home fridge/pantry stock.
    - Baseline is 3 core meals per day. Extra snacks/shakes reported by the user are added as additional slots without overwriting the 3 core meals.
-6. **Dynamic Floating Grocery Cadence:**
+7. **Dynamic Floating Grocery Cadence:**
    - Calculates the exact date of on-hand stock exhaustion ($D_{\text{exhaust}}$).
    - Prunes or cancels redundant grocery runs before $D_{\text{exhaust}}$.
    - Shifts the next fresh grocery run to $D_{\text{exhaust}}$, purchasing fresh meat for the subsequent 3–4 days (shelf-life limit), followed by subsequent runs at 3–4 day intervals to complete the planning window.
    - Updates batch cook prep dates to match the rescheduled grocery run day.
-7. **Full Artifact Synchronization:**
+8. **Full Artifact Synchronization:**
    - Updates `{prefix}_meal_plan.csv`, `{prefix}_batch_cook.csv`, and `{prefix}_grocery_list.csv` in place.
 
 ### Non-Goals
+- Real-time 24/7 daemon background workers or timers.
 - Requiring manual check-ins for every scheduled meal.
 - Real-time barcode or IoT smart fridge integration.
-- Micromanaging non-perishable staples (salt, soy sauce, olive oil) beyond existing bulk threshold tracking.
 
 ### Anti-Goals
 - Deducting home meat stock when the athlete eats out at a restaurant.
+- Leaving skipped meal ingredients marked as consumed instead of putting them back in the fridge.
 - Buying duplicate protein while on-hand meat sits in the fridge.
-- Rigidly enforcing Saturday/Wednesday shopping dates when the athlete already has food to eat.
 
 ---
 
 ## 3. Architecture & Data Flow
 
 ```
-User Input ("I have 500g wings & 500g thighs, craving air fried chicken")
+User Input (Any message / Craving / Retrospective deviation)
      │
      ▼
-[ADK Agent / tool_update_stock_and_craving]
+[1. Chat-Time Reconciliation Engine]
+     │   - Reads last_reconciled_at vs now_local
+     │   - Assumes past runs completed -> adds assumed inventory
+     │   - Assumes past cutoff meals consumed -> deducts stock
+     │   - Advances last_reconciled_at
      │
-     ├─► 1. Temporal Window Resolution:
-     │        - Checks local time against anchors (Breakfast 08:00, Lunch 12:30, Dinner 19:00)
-     │        - Past meals assumed eaten (implicit consumption)
-     │        - Identifies chronologically next core meal slot
+     ▼
+[2. Dispatch Request]
      │
-     ├─► 2. Stock Bookkeeping:
-     │        - Saves reported items to inventory.json (status="actual")
-     │        - Removes unbought redundant perishable meats from upcoming grocery run
+     ├─► Retrospective Report ("I skipped breakfast this morning"):
+     │        - Restores breakfast ingredients to inventory.json
+     │        - Updates today's logged macros
+     │        - Calculates deficit & recommends remediation (e.g., bedtime shake)
      │
-     ├─► 3. Craving Insertion:
-     │        - Replaces target slot with Craving Dish & solves raw weights for macros
+     ├─► Eating Out ("I ate out for lunch"):
+     │        - Restores planned lunch ingredients to inventory.json
+     │        - Logs restaurant macros in meal_logs.csv
      │
-     ├─► 4. Stock Exhaustion:
-     │        - Allocates remaining cuts to consecutive lunch & dinner slots
-     │        - Dinner prepared as soup/broth variation (compromise texture rule)
-     │
-     ├─► 5. Floating Cadence Solver:
-     │        - Computes D_exhaust (exact date when on-hand stock hits 0)
-     │        - Prunes pre-exhaustion grocery runs
-     │        - Places next grocery run on D_exhaust (and batch prep on D_exhaust)
-     │        - Spaces future runs at 3-4 day intervals
-     │
-     └─► 6. Artifact Sync: Rewrites weekly meal_plan.csv, batch_cook.csv, grocery_list.csv
+     └─► Craving & On-Hand Stock ("I have 500g wings & 500g thighs, craving air fried chicken"):
+              - Identifies next core meal window
+              - Swaps craving dish and solves raw portion weights
+              - Allocates remaining chicken to consecutive lunch & dinner (soup) slots
+              - Solves D_exhaust and reschedules grocery runs to float dynamically
+              - Rewrites CSV artifacts
 ```
 
 ---
@@ -89,7 +96,7 @@ User Input ("I have 500g wings & 500g thighs, craving air fried chicken")
 Data structure stored in `data/inventory.json`:
 ```json
 {
-  "updated_at": "2026-10-10T18:30:00+02:00",
+  "last_reconciled_at": "2026-10-10T18:30:00+02:00",
   "items": [
     {
       "food_id": "chicken_wings",
@@ -110,14 +117,28 @@ Data structure stored in `data/inventory.json`:
   ]
 }
 ```
-- **Lifecycle:**
-  - Items in planned grocery runs with run date $\le$ current date default to `status: "assumed"`.
-  - When the user explicitly provides stock updates or logs an unplanned grocery purchase, items are recorded as `status: "actual"`.
-  - Reporting on-hand stock wipes unbought assumed perishables for upcoming runs, preventing ghost inventory.
-  - Eating out records calories/protein in `meal_logs.csv` but **never** decrements `inventory.json`.
-  - Implicit consumption: as time passes past anchor windows (08:00, 12:30, 19:00), planned meal ingredients are decremented from stock automatically.
+- **Lifecycle & Reconciliation:**
+  - `reconcile_inventory_state(data_dir, current_dt)`:
+    - Runs at chat start or before tool execution.
+    - Adds planned grocery runs with run date $\le$ current date as `assumed` inventory.
+    - For past meal slots between `last_reconciled_at` and `current_dt`, deducts ingredient quantities from inventory.
+    - Saves `last_reconciled_at = current_dt.isoformat()`.
+  - When user explicitly updates stock or logs unplanned shopping, items are saved with `status: "actual"`.
+  - Reporting on-hand stock clears unbought assumed perishables from upcoming runs.
 
-### B. Temporal Anchor Windows & Craving Targeting
+### B. Retrospective Past Meal Handling & Remediation
+- Function `reconcile_past_meal_deviation(data_dir, target_date, slot_name, deviation_type, eaten_macros=None)`:
+  - If `deviation_type == "skipped"`:
+    - Finds ingredients scheduled for that slot.
+    - Re-adds their portion weights back to `inventory.json`!
+    - Updates `meal_logs.csv` to record slot as skipped.
+    - Calculates remaining daily protein and calorie deficit.
+    - Generates concrete suggestion (e.g. "You are 35.0g protein and 420 kcal short today. Suggested fix: Drink a double whey shake (50g whey = 38g P, 200 kcal) before bed.").
+  - If `deviation_type == "eat_out"`:
+    - Planned slot ingredients are restored to `inventory.json`.
+    - Eaten out calories and protein are logged in `meal_logs.csv`.
+
+### C. Temporal Anchor Windows & Craving Targeting
 Preferred anchor times and cutoff thresholds:
 1. **Breakfast:** Target 08:00 (window 06:00 – 10:00).
 2. **Lunch:** Target 12:30 (window 10:00 – 14:30).
@@ -133,7 +154,7 @@ Preferred anchor times and cutoff thresholds:
   - Default: Cravings replace the resolved core meal slot.
   - If user explicitly specifies "extra", "snack", or "shake", an extra slot is appended to the day without overwriting core slots.
 
-### C. Consecutive Stock Exhaustion Engine (Lunch & Dinner)
+### D. Consecutive Stock Exhaustion Engine (Lunch & Dinner)
 1. Remaining on-hand protein quantities are tracked.
 2. For each consecutive upcoming meal slot:
    - **Lunch Slots:** Schedule solid/air-fried/batch cuts (e.g. "Air Fried Chicken with Rice & Broccoli").
@@ -143,7 +164,7 @@ Preferred anchor times and cutoff thresholds:
    - Decrement on-hand stock by $W_{\text{raw}}$.
 3. Record exact date and slot when inventory reaches 0: $D_{\text{exhaust}}$.
 
-### D. Dynamic Floating Grocery Cadence
+### E. Dynamic Floating Grocery Cadence
 1. From $D_{\text{exhaust}}$, compute the date for the next grocery run:
    - Grocery Run Date = Date of first meal requiring store-bought meat ($D_{\text{run}} = D_{\text{exhaust}}$).
 2. Fresh meat rule: Meats bought on $D_{\text{run}}$ cover meals from $D_{\text{run}}$ through $D_{\text{run}} + 3\text{ days}$ (maximum 72–96h refrigeration window).
@@ -167,15 +188,17 @@ def tool_update_stock_and_craving(
     """Updates actual stock on hand, swaps next core meal to satisfy craving, and reschedules subsequent lunch & dinner meals and grocery runs."""
 ```
 
-### 2. `tool_log_eating_out`
+### 2. `tool_report_past_meal_deviation`
 ```python
-def tool_log_eating_out(
+def tool_report_past_meal_deviation(
     meal_slot: str,
-    calories: float,
-    protein_g: float,
-    dish_description: str = "Restaurant meal"
+    deviation_type: str,  # "skipped" | "eat_out" | "custom"
+    day_or_date: Optional[str] = None,  # Defaults to "today"
+    eaten_description: Optional[str] = None,
+    actual_calories: Optional[float] = None,
+    actual_protein_g: Optional[float] = None
 ) -> str:
-    """Logs an eaten out meal for macro tracking without deducting home pantry or meat stock."""
+    """Reconciles a past meal deviation, reverses assumed stock deductions to put unused food back in the fridge, and advises on macro catch-up."""
 ```
 
 ### 3. `tool_log_unplanned_grocery_run`
@@ -190,19 +213,19 @@ def tool_log_unplanned_grocery_run(
 ### 4. `tool_view_inventory_stock`
 ```python
 def tool_view_inventory_stock() -> str:
-    """Displays current inventory separated into 'Actual Stock' (confirmed) and 'Assumed Stock' (from planned runs)."""
+    """Displays current inventory separated into 'Actual Stock' (confirmed) and 'Assumed Stock' (from planned runs), plus reconciliation timestamp."""
 ```
 
 ---
 
 ## 6. Verification & Test Plan
 1. **Unit Tests:**
-   - `test_inventory_state_assumed_vs_actual`: Confirms tracking, loading, saving, and superseding of stock.
-   - `test_implicit_consumption_by_time`: Verifies past meal windows automatically deduct stock without manual logging.
-   - `test_eating_out_does_not_deduct_stock`: Verifies eating out logs calories/protein but leaves `inventory.json` stock intact.
+   - `test_chat_time_reconciliation_catchup`: Simulates elapsed days/hours and verifies past runs/meals are marked assumed consumed.
+   - `test_retrospective_skipped_meal_restores_stock`: Verifies reporting "skipped breakfast" restores ingredients back into `inventory.json` and calculates deficit advice.
+   - `test_retrospective_eating_out_restores_stock`: Verifies eating out restores home ingredients while recording actual eaten calories/protein.
    - `test_preferred_anchor_windows`: Verifies 08:00 Breakfast, 12:30 Lunch, and 19:00 Dinner window cutoffs.
    - `test_stock_exhaustion_lunch_and_dinner_soup`: Verifies 500g wings + 500g thighs are consumed across consecutive lunch (solid) and dinner (chicken soup) slots until 0g remains.
    - `test_dynamic_grocery_cadence_shift`: Verifies planned runs are pruned, next run is placed on $D_{\text{exhaust}}$, and subsequent runs occur 3–4 days later.
    - `test_unplanned_grocery_logging`: Confirms out-of-plan shopping adds actual inventory and recalculates runs.
 2. **Integration Tests:**
-   - Full flow test calling `tool_update_stock_and_craving` on an active cycle, checking CSV output for meal plan, batch cook, and grocery list.
+   - Full flow test calling `tool_update_stock_and_craving` and `tool_report_past_meal_deviation` on an active cycle, checking CSV output for meal plan, batch cook, and grocery list.
