@@ -113,6 +113,7 @@ class InventoryState:
     carried_calories: float = 0.0
     carried_protein_g: float = 0.0
     items: list[InventoryItem] = field(default_factory=list)
+    assumed_runs: list[str] = field(default_factory=list)
 
 def load_catalog(
     catalog_dir: Optional[str] = None,

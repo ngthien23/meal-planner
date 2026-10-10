@@ -1,13 +1,18 @@
 import os
 import json
-from datetime import datetime
+import csv
+import re
+from datetime import datetime, date, time, timedelta
 from typing import Optional
 
 from meal_planner.models import (
     InventoryItem,
     InventoryState,
     load_catalog,
+    UserProfile,
 )
+from meal_planner.tools.onboarding import resolve_timezone, load_user_profile
+from meal_planner.tools.meal_generator import get_current_cycle_prefix, ensure_weekly_plan_artifacts
 
 __all__ = [
     "InventoryItem",
@@ -15,6 +20,7 @@ __all__ = [
     "load_inventory_state",
     "save_inventory_state",
     "record_actual_stock",
+    "reconcile_inventory_state",
 ]
 
 
@@ -29,7 +35,8 @@ def load_inventory_state(data_dir: str) -> InventoryState:
             last_reconciled_at=None,
             carried_calories=0.0,
             carried_protein_g=0.0,
-            items=[]
+            items=[],
+            assumed_runs=[]
         )
 
     try:
@@ -41,7 +48,8 @@ def load_inventory_state(data_dir: str) -> InventoryState:
                 last_reconciled_at=None,
                 carried_calories=0.0,
                 carried_protein_g=0.0,
-                items=[]
+                items=[],
+                assumed_runs=[]
             )
 
         items = [
@@ -60,14 +68,16 @@ def load_inventory_state(data_dir: str) -> InventoryState:
             last_reconciled_at=data.get("last_reconciled_at"),
             carried_calories=float(data.get("carried_calories", 0.0)),
             carried_protein_g=float(data.get("carried_protein_g", 0.0)),
-            items=items
+            items=items,
+            assumed_runs=data.get("assumed_runs", [])
         )
     except Exception:
         return InventoryState(
             last_reconciled_at=None,
             carried_calories=0.0,
             carried_protein_g=0.0,
-            items=[]
+            items=[],
+            assumed_runs=[]
         )
 
 
@@ -80,6 +90,7 @@ def save_inventory_state(data_dir: str, state: InventoryState) -> None:
         "last_reconciled_at": state.last_reconciled_at,
         "carried_calories": round(float(state.carried_calories), 2),
         "carried_protein_g": round(float(state.carried_protein_g), 2),
+        "assumed_runs": getattr(state, "assumed_runs", []),
         "items": [
             {
                 "food_id": item.food_id,
@@ -163,3 +174,310 @@ def record_actual_stock(
 
     save_inventory_state(data_dir, state)
     return state
+
+
+def reconcile_inventory_state(
+    data_dir: str,
+    current_dt: datetime,
+    user_tz: str = "Europe/Brussels"
+) -> tuple[InventoryState, list[str]]:
+    """Brings fridge stock up to date by catching up past scheduled shopping and meals.
+    
+    1. Assumes planned grocery runs with run date <= current_dt.date() were purchased
+       and adds items to inventory with status='assumed' (respecting actual stock).
+    2. Identifies past meal slots whose cutoff times (Breakfast 10:00, Lunch 14:30,
+       Dinner 21:00) fall between last_reconciled_at and current_dt, and deducts
+       their ingredients from stock (clamping to 0.0g).
+    3. Advances last_reconciled_at to current_dt.isoformat() and persists state.
+    
+    Returns (state, actions).
+    """
+    profile = load_user_profile(data_dir)
+    effective_tz = user_tz if user_tz else (profile.timezone if profile else "Europe/Brussels")
+    tz = resolve_timezone(effective_tz)
+
+    if current_dt.tzinfo is None:
+        current_dt = current_dt.replace(tzinfo=tz)
+    else:
+        current_dt = current_dt.astimezone(tz)
+
+    state = load_inventory_state(data_dir)
+    if not hasattr(state, "assumed_runs") or state.assumed_runs is None:
+        state.assumed_runs = []
+
+    if profile is None:
+        profile = UserProfile(timezone=effective_tz)
+
+    prefix = get_current_cycle_prefix(
+        tz_name=effective_tz,
+        reference_dt=current_dt,
+        week_start_day=getattr(profile, "week_start_day", "Saturday")
+    )
+
+    plans_dir = os.path.join(data_dir, "plans")
+    plan_path = os.path.join(plans_dir, f"{prefix}_meal_plan.csv")
+    grocery_path = os.path.join(plans_dir, f"{prefix}_grocery_list.csv")
+
+    if not (os.path.exists(plan_path) and os.path.exists(grocery_path)):
+        ensure_weekly_plan_artifacts(profile, data_dir, reference_dt=current_dt)
+
+    try:
+        catalog_ingredients, _ = load_catalog(data_dir=data_dir)
+    except Exception:
+        catalog_ingredients = {}
+
+    def is_meat_or_perishable(food_id: str) -> bool:
+        if food_id in catalog_ingredients:
+            ing = catalog_ingredients[food_id]
+            return bool(ing.perishable and (ing.category in ("meat", "seafood", "poultry") or "meat" in ing.category.lower()))
+        lower_id = food_id.lower()
+        if "canned" in lower_id or "dried" in lower_id:
+            return False
+        keywords = ("chicken", "beef", "pork", "meat", "shrimp", "fish", "salmon", "turkey", "lamb", "steak", "thigh", "wing", "breast")
+        return any(k in lower_id for k in keywords)
+
+    user_has_actual_meat = any(
+        it.status == "actual" and is_meat_or_perishable(it.food_id)
+        for it in state.items
+    )
+
+    actions: list[str] = []
+
+    # 1. Process scheduled grocery runs on or before current_dt.date()
+    grocery_files = []
+    if os.path.exists(plans_dir):
+        for fn in sorted(os.listdir(plans_dir)):
+            if re.match(r"^\d{6}_grocery_list\.csv$", fn):
+                grocery_files.append(os.path.join(plans_dir, fn))
+    if not grocery_files and os.path.exists(grocery_path):
+        grocery_files.append(grocery_path)
+    if not grocery_files and os.path.exists(os.path.join(data_dir, "grocery_list.csv")):
+        grocery_files.append(os.path.join(data_dir, "grocery_list.csv"))
+
+    for g_file in grocery_files:
+        try:
+            with open(g_file, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+        except Exception:
+            continue
+
+        m_pref = re.match(r"^(\d{6})_grocery_list\.csv$", os.path.basename(g_file))
+        if m_pref:
+            try:
+                file_cycle_start = datetime.strptime(m_pref.group(1), "%y%m%d").date()
+            except Exception:
+                file_cycle_start = current_dt.date()
+        else:
+            try:
+                file_cycle_start = datetime.strptime(prefix, "%y%m%d").date()
+            except Exception:
+                file_cycle_start = current_dt.date()
+
+        runs_by_label: dict[str, list[dict]] = {}
+        for r in rows:
+            run_lbl = r.get("Run", "").strip()
+            if run_lbl:
+                runs_by_label.setdefault(run_lbl, []).append(r)
+
+        for run_lbl, run_rows in runs_by_label.items():
+            run_date = None
+            try:
+                run_date = datetime.strptime(run_lbl, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+
+            if run_date is None:
+                for day_offset in range(7):
+                    candidate_date = file_cycle_start + timedelta(days=day_offset)
+                    if candidate_date.strftime("%A").lower() in run_lbl.lower():
+                        run_date = candidate_date
+                        break
+                if run_date is None:
+                    run_date = file_cycle_start
+
+            if run_date <= current_dt.date():
+                run_key = f"{run_date.isoformat()}_{run_lbl}"
+                if run_key not in state.assumed_runs:
+                    run_display = run_lbl if "run" in run_lbl.lower() else f"{run_lbl} Run"
+                    for item_row in run_rows:
+                        raw_item_name = item_row.get("Item", "").strip()
+                        qty_str = item_row.get("Quantity", "")
+                        pkg_str = item_row.get("Package_Size", "")
+
+                        qty_g = 0.0
+                        m_pkgs = re.search(r"(\d+)\s*x", qty_str)
+                        m_pkg_size = re.search(r"(\d+(?:\.\d+)?)\s*g", pkg_str)
+                        if m_pkgs and m_pkg_size:
+                            qty_g = float(m_pkgs.group(1)) * float(m_pkg_size.group(1))
+                        else:
+                            m_planned = re.search(r"\((\d+(?:\.\d+)?)\s*g", qty_str)
+                            if m_planned:
+                                qty_g = float(m_planned.group(1))
+                            elif m_pkg_size:
+                                qty_g = float(m_pkg_size.group(1))
+                            else:
+                                qty_g = 500.0
+
+                        food_id = None
+                        for cat_id, cat_ing in catalog_ingredients.items():
+                            if cat_ing.name.lower() == raw_item_name.lower():
+                                food_id = cat_id
+                                break
+                        if not food_id:
+                            food_id = raw_item_name.lower().replace(" ", "_").replace("-", "_")
+
+                        is_perishable = is_meat_or_perishable(food_id)
+
+                        existing_actual = next((i for i in state.items if i.food_id == food_id and i.status == "actual"), None)
+                        if existing_actual:
+                            continue
+
+                        if is_perishable and user_has_actual_meat:
+                            continue
+
+                        existing_assumed = next((i for i in state.items if i.food_id == food_id and i.status == "assumed"), None)
+                        if existing_assumed:
+                            existing_assumed.quantity_g = round(existing_assumed.quantity_g + qty_g, 2)
+                        else:
+                            state.items.append(
+                                InventoryItem(
+                                    food_id=food_id,
+                                    name=raw_item_name,
+                                    quantity_g=round(qty_g, 2),
+                                    status="assumed",
+                                    source="planned_run",
+                                    purchased_date=run_date.isoformat()
+                                )
+                            )
+                        actions.append(f"Assumed {int(round(qty_g))}g {raw_item_name} purchased from {run_display}")
+
+                    state.assumed_runs.append(run_key)
+
+    # 2. Process meal consumption between last_reconciled_at and current_dt
+    last_dt = None
+    if state.last_reconciled_at:
+        try:
+            last_dt = datetime.fromisoformat(state.last_reconciled_at)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=tz)
+            else:
+                last_dt = last_dt.astimezone(tz)
+        except Exception:
+            last_dt = None
+
+    if last_dt is None:
+        try:
+            cycle_start_date = datetime.strptime(prefix, "%y%m%d").date()
+            last_dt = datetime.combine(cycle_start_date, time(0, 0), tzinfo=tz)
+        except Exception:
+            last_dt = datetime.combine(current_dt.date(), time(0, 0), tzinfo=tz)
+
+    cutoff_hours = {
+        "breakfast": time(10, 0),
+        "lunch": time(14, 30),
+        "dinner": time(21, 0)
+    }
+
+    meal_files = []
+    if os.path.exists(plans_dir):
+        for fn in sorted(os.listdir(plans_dir)):
+            if re.match(r"^\d{6}_meal_plan\.csv$", fn):
+                meal_files.append(os.path.join(plans_dir, fn))
+    if not meal_files and os.path.exists(plan_path):
+        meal_files.append(plan_path)
+    if not meal_files and os.path.exists(os.path.join(data_dir, "meal_plan.csv")):
+        meal_files.append(os.path.join(data_dir, "meal_plan.csv"))
+
+    all_meal_rows = []
+    for m_file in meal_files:
+        try:
+            with open(m_file, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                all_meal_rows.extend(list(reader))
+        except Exception:
+            continue
+
+    slot_order = {"breakfast": 0, "lunch": 1, "dinner": 2}
+    def meal_sort_key(r):
+        d = r.get("Date", "")
+        m = r.get("Meal", "").lower()
+        return (d, slot_order.get(m, 9))
+
+    all_meal_rows.sort(key=meal_sort_key)
+
+    def find_inventory_item(ing_raw_name: str) -> Optional[InventoryItem]:
+        ing_l = ing_raw_name.strip().lower()
+        norm = ing_l.replace(" ", "_").replace("-", "_")
+
+        # 1. Direct food_id match
+        for it in state.items:
+            if it.food_id.lower() == norm:
+                return it
+
+        # 2. Direct name match
+        for it in state.items:
+            if it.name.lower() == ing_l:
+                return it
+
+        # 3. Match via catalog
+        for cat_id, cat_ing in catalog_ingredients.items():
+            if cat_ing.name.lower() == ing_l or cat_id.lower() == norm:
+                for it in state.items:
+                    if it.food_id == cat_id:
+                        return it
+                break
+
+        # 4. Substring match
+        for it in state.items:
+            it_name_l = it.name.lower()
+            it_id_l = it.food_id.lower().replace("_", " ")
+            if it_name_l in ing_l or ing_l in it_name_l:
+                return it
+            if it_id_l in ing_l or ing_l in it_id_l:
+                return it
+
+        return None
+
+    for row in all_meal_rows:
+        date_str = row.get("Date", "").strip()
+        meal_name = row.get("Meal", "").strip()
+        m_lower = meal_name.lower()
+        cutoff_t = cutoff_hours.get(m_lower)
+        if not cutoff_t or not date_str:
+            continue
+
+        try:
+            m_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+
+        cutoff_dt = datetime.combine(m_date, cutoff_t, tzinfo=tz)
+
+        if last_dt < cutoff_dt <= current_dt:
+            ing_str = row.get("Ingredient", "")
+            pieces = [p.strip() for p in re.split(r"[;,]", ing_str) if p.strip()]
+
+            deducted_summaries = []
+            for piece in pieces:
+                m = re.match(r"^(\d+(?:\.\d+)?)\s*(?:g|ml)?\s*(?:raw(?:/dry)?\s*)?(.*?)$", piece, re.IGNORECASE)
+                if not m:
+                    continue
+                needed_g = float(m.group(1))
+                ing_raw_name = m.group(2).strip()
+
+                matched_item = find_inventory_item(ing_raw_name)
+                if matched_item:
+                    actual_deducted = min(matched_item.quantity_g, needed_g)
+                    matched_item.quantity_g = max(0.0, round(matched_item.quantity_g - needed_g, 2))
+                    if actual_deducted > 0:
+                        deducted_summaries.append(f"{int(round(actual_deducted))}g {matched_item.name}")
+
+            if deducted_summaries:
+                actions.append(f"Assumed {date_str} {meal_name.capitalize()} consumed: deducted {', '.join(deducted_summaries)}")
+            else:
+                actions.append(f"Assumed {date_str} {meal_name.capitalize()} consumed")
+
+    state.last_reconciled_at = current_dt.isoformat()
+    save_inventory_state(data_dir, state)
+    return state, actions
