@@ -15,7 +15,7 @@ ENV_PATH = os.path.join(REPO_ROOT, ".env")
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(ENV_PATH)
+    load_dotenv(ENV_PATH, override=True)
 except ImportError:
     pass
 
@@ -375,7 +375,7 @@ def serve_adk_playground(
         REPO_ROOT
     ]
     try:
-        subprocess.run(cmd, cwd=REPO_ROOT)
+        subprocess.run(cmd, cwd=REPO_ROOT, env=dict(os.environ))
     except KeyboardInterrupt:
         print("\nADK Playground server shut down.")
 
