@@ -149,8 +149,15 @@ def record_actual_stock(
     today_str = datetime.now().strftime("%Y-%m-%d")
 
     for raw_item in items:
-        food_id = raw_item["food_id"]
-        name = raw_item.get("name") or food_id.replace("_", " ").title()
+        food_id = raw_item.get("food_id")
+        name = raw_item.get("name")
+        if not food_id and name:
+            food_id = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+        elif not food_id:
+            food_id = "custom_item"
+        if not name:
+            name = food_id.replace("_", " ").title()
+
         quantity_g = float(raw_item.get("quantity_g", 0.0))
         purchased_date = raw_item.get("purchased_date") or today_str
         source = raw_item.get("source", "user_report")

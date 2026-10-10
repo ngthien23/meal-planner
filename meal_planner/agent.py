@@ -34,6 +34,21 @@ from meal_planner.tools.meal_generator import (
     ensure_weekly_plan_artifacts,
     get_current_cycle_prefix
 )
+from meal_planner.tools.inventory import (
+    load_inventory_state,
+    save_inventory_state,
+    record_actual_stock,
+    reconcile_inventory_state,
+    reconcile_past_meal_deviation
+)
+from meal_planner.tools.artifacts import (
+    get_meal_plan_csv,
+    update_meal_plan_csv,
+    get_grocery_list_csv,
+    update_grocery_list_csv,
+    get_batch_cook_csv,
+    update_batch_cook_csv
+)
 
 def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: str = "data") -> str:
     """Builds the system instruction prompt for the Gemini meal planner agent."""
@@ -151,11 +166,33 @@ MULTIMODAL PHOTO HANDLING (BILLS & MEALS):
      - If it deviates from the scheduled meal (e.g. restaurant food, drinking a shake instead of cooking, extra portions), call `tool_report_meal_deviation(day, meal, actual_recipe_name, protein_consumed_g, calories_consumed)`.
      - Confirm that macros were rebalanced and state any perishable meats flagged to roll over or freeze.
 
-CORE ATHLETE RULES:
-1. Texture Rules: Breakfast & Dinner strictly soft, liquid, or broth-based (smoothies, Phở); Lunch strictly solid batch (Thịt kho, Gà xào sả ớt).
-2. Dietary Bans: Fortified soy milk only (no dairy), ON Whey only, canned tuna only.
-3. Raw Weights: All recipes dictate raw/dry ingredient weights.
-4. Split Grocery Runs: Saturday Run (Sat-Tue meats + Sun batch prep); Wednesday Run (Wed-Fri meats + Wed batch prep). Meat fridge life <= 72h.
+CORE ATHLETE RULES & PLANNING PRINCIPLES:
+1. YOU ARE THE PLANNER & CHEF:
+   - You reason over athlete preferences, on-hand meat, cravings, and schedules to decide dishes and portions.
+   - You work directly with artifacts: read and update `{active_plan_csv}` with `tool_update_meal_plan` and `{active_grocery_csv}` with `tool_update_grocery_list`.
+2. ROUGH MACROS & EVEN STOCK PORTIONING:
+   - Daily macronutrients are rough guidelines, NOT rigid decimal constraints!
+   - When portioning on-hand meat or scheduled cuts, prioritize even, natural portioning (e.g. four 250g portions of 1000g chicken) over micro-optimizing decimal numbers.
+   - If protein intake for a day ends up slightly below target, comfortably top it up with 1–2 scoops of ON Whey powder (30–60g whey, ~24–48g protein) as a shake or snack.
+3. PROTEIN-FIRST DECISIONS & NEXT-MEAL CRAVINGS:
+   - Meals are decided based on available protein.
+   - When the user reports a craving (e.g. "craving air fried chicken"), the craving replaces the very next core meal relative to current local time.
+   - Update on-hand inventory with `tool_update_on_hand_stock` if the user reported available meat.
+4. CONSECUTIVE STOCK EXHAUSTION (LUNCH & DINNER):
+   - Always exhaust on-hand protein across consecutive upcoming meals (both lunch and dinner) until stock is depleted (0g).
+   - Texture rules: Breakfast & Dinner strictly soft, liquid, or broth-based (smoothies, chicken soup / broth) to respect the athlete's digestion; Lunch is solid batch / air-fried cuts.
+5. DYNAMIC FLOATING GROCERY CADENCE:
+   - Groceries are restocked every 3–4 days (shelf-life limit), not dead-locked onto fixed days.
+   - When the user has on-hand stock, calculate the date when that stock runs out (D_exhaust).
+   - Prune redundant unbought meat from the upcoming run.
+   - Shift the next grocery run to D_exhaust, followed by subsequent runs at 3–4 day intervals.
+   - Update `{active_grocery_csv}` using `tool_update_grocery_list`.
+6. RETROSPECTIVE MEAL UPDATES & CATCH-UP:
+   - At chat time, bring stock up to date with `tool_catch_up_inventory`.
+   - If the user reports skipping a meal or eating out, call `tool_report_past_meal_deviation`: this restores unconsumed home food back to inventory (eating out never deducts fridge stock!).
+   - If there is a missed calorie deficit, you can advise an immediate evening snack/shake or spread it across upcoming days capped at +150 to +200 kcal/day and +15g protein/day.
+7. Dietary Bans: Fortified soy milk only (no dairy), ON Whey only, canned tuna only.
+8. Raw Weights: All recipes dictate raw/dry ingredient weights.
 """
 
 def get_agent_tools(data_dir: str = "data") -> list[Callable]:
@@ -456,11 +493,213 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             f"Logged to prices.csv and ready for meal planning & substitutions."
         )
 
+    def tool_get_inventory() -> str:
+        """Returns the current fridge and pantry stock (actual vs assumed) and any carried calorie/protein debt."""
+        state = load_inventory_state(data_dir)
+        items_desc = []
+        for it in state.items:
+            if it.quantity_g > 0:
+                items_desc.append(f"- {it.name}: {it.quantity_g:.0f}g ({it.status}, bought {it.purchased_date or 'n/a'})")
+        stock_text = "\n".join(items_desc) if items_desc else "No items currently recorded in inventory."
+        carried_text = ""
+        if state.carried_calories > 0 or state.carried_protein_g > 0:
+            carried_text = f"\nCarried Deficit: +{state.carried_calories:.0f} kcal, +{state.carried_protein_g:.1f}g protein."
+        reconciled = f"Last checked: {state.last_reconciled_at or 'Never'}."
+        return f"Current Inventory ({reconciled}):\n{stock_text}{carried_text}"
+
+    def tool_update_on_hand_stock(
+        items: list[dict],
+        clear_unbought_run_meats: bool = True
+    ) -> str:
+        """Records actual on-hand stock reported by the user (e.g. 500g wings, 500g thighs).
+        
+        Actual stock immediately supersedes assumptions. If clear_unbought_run_meats is True,
+        unbought perishable meats from the upcoming grocery run are automatically removed.
+        
+        Args:
+            items: List of dicts, each with 'name' or 'food_id' and 'quantity_g'.
+                   Example: [{'name': 'Chicken Wings', 'quantity_g': 500.0}, {'name': 'Chicken Thigh Quarters', 'quantity_g': 500.0}]
+            clear_unbought_run_meats: If True, removes redundant unbought meats from grocery plan.
+        """
+        state = record_actual_stock(data_dir, items, clear_unbought_run_meats=clear_unbought_run_meats)
+        recorded = [f"{float(it.get('quantity_g', 0)):.0f}g {it.get('name', it.get('food_id'))}" for it in items]
+        return f"Updated actual stock for: {', '.join(recorded)}. Inventory state saved."
+
+    def tool_catch_up_inventory() -> str:
+        """Catches up inventory based on current local clock (Breakfast 08:00, Lunch 12:30, Dinner 19:00 cutoffs).
+        
+        Assumes past meals were eaten according to plan (unless logged as skipped/eaten out)
+        and assumes scheduled grocery runs on or before today were completed.
+        """
+        profile = load_user_profile(data_dir)
+        user_tz = profile.timezone if profile else "Europe/Brussels"
+        tz = resolve_timezone(user_tz)
+        now_local = datetime.now(tz)
+        state, actions = reconcile_inventory_state(data_dir, current_dt=now_local, user_tz=user_tz)
+        if actions:
+            return "Inventory caught up to current time:\n" + "\n".join(f"- {a}" for a in actions)
+        return f"Inventory is already up to date as of {now_local.strftime('%Y-%m-%d %H:%M')}."
+
+    def tool_report_past_meal_deviation(
+        target_date: str,
+        slot_name: str,
+        deviation_type: str,
+        actual_calories: Optional[float] = None,
+        actual_protein_g: Optional[float] = None,
+        notes: Optional[str] = None
+    ) -> str:
+        """Reports that a past meal was skipped or eaten out, putting unconsumed home stock back in the fridge.
+        
+        Args:
+            target_date: Date of meal (YYYY-MM-DD).
+            slot_name: 'breakfast', 'lunch', or 'dinner'.
+            deviation_type: 'skipped' or 'eat_out'.
+            actual_calories: Calories consumed (if eaten out).
+            actual_protein_g: Protein consumed in grams (if eaten out).
+            notes: Optional notes or restaurant dish description.
+        """
+        res = reconcile_past_meal_deviation(
+            data_dir,
+            target_date=target_date,
+            slot_name=slot_name,
+            deviation_type=deviation_type,
+            eaten_description=notes,
+            actual_calories=actual_calories,
+            actual_protein_g=actual_protein_g,
+            roll_over_difference=True
+        )
+        return res.get("message", "Processed past meal deviation.")
+
+    def tool_get_macro_targets() -> str:
+        """Returns the athlete's daily calorie and macronutrient guidelines.
+        
+        Note: These are rough reference guidelines, not rigid decimal constraints!
+        Small deviations to make even portions of available meat are preferred.
+        Protein goals can also be topped up with 1-2 scoops of whey powder (30-60g).
+        """
+        profile = load_user_profile(data_dir)
+        if not profile or not profile.is_onboarded:
+            return "Profile not onboarded. Please onboard first."
+        targets = calculate_daily_targets(
+            profile.bodyweight_kg,
+            profile.protein_multiplier,
+            profile.fat_multiplier,
+            profile.target_calories
+        )
+        return (
+            f"Daily Macro Reference Guidelines (Rough Targets):\n"
+            f"- Bodyweight: {profile.bodyweight_kg:.1f} kg | Goal: {profile.goal_state}\n"
+            f"- Daily Calories: ~{targets.calories:.0f} kcal\n"
+            f"- Protein: ~{targets.protein_g:.0f}g ({profile.protein_multiplier:.1f}g/kg)\n"
+            f"- Carbs: ~{targets.carbs_g:.0f}g\n"
+            f"- Fat: ~{targets.fat_g:.0f}g ({profile.fat_multiplier:.1f}g/kg)\n"
+            f"* Tip: Natural, even meat portions are preferred over exact decimals. "
+            f"If protein is slightly low, recommend topping up with 1 scoop (30g) of ON whey."
+        )
+
+    def tool_get_meal_plan(target_date: Optional[str] = None) -> str:
+        """Reads the active weekly meal plan CSV.
+        
+        Args:
+            target_date: Optional 'YYYY-MM-DD' date filter to view meals for a specific day.
+        """
+        rows = get_meal_plan_csv(data_dir, target_date=target_date)
+        if not rows:
+            return "No meal plan found. Generate a baseline plan first."
+        lines = ["| Date | Meal | Recipe | Ingredients | P | C | F | Kcal |", "|---|---|---|---|---|---|---|---|"]
+        for r in rows:
+            lines.append(f"| {r.get('Date')} | {r.get('Meal')} | {r.get('Recipe')} | {r.get('Ingredient')} | {r.get('P')} | {r.get('C')} | {r.get('F')} | {r.get('Calories')} |")
+        return "\n".join(lines)
+
+    def tool_update_meal_plan(meal_entries: list[dict]) -> str:
+        """Updates, replaces, or adds meal slots directly in the active weekly meal plan CSV.
+        
+        Use this tool to persist planned dishes, craving substitutions, or stock exhaustion meals.
+        
+        Args:
+            meal_entries: List of meal dicts. Each must include 'Date' and 'Meal' ('Breakfast', 'Lunch', 'Dinner', 'Snack'),
+                          plus 'Recipe', 'Ingredient', 'P', 'C', 'F', 'Calories'.
+                          Example: [{'Date': '2026-10-10', 'Meal': 'Lunch', 'Recipe': 'Air Fried Crispy Chicken',
+                                     'Ingredient': '250g Chicken Wings; 250g Chicken Thighs; 150g Jasmine Rice',
+                                     'P': 55, 'C': 45, 'F': 18, 'Calories': 560}]
+        """
+        res = update_meal_plan_csv(data_dir, meal_entries)
+        return res.get("message", "Meal plan updated.")
+
+    def tool_get_grocery_list() -> str:
+        """Reads the active split grocery list CSV."""
+        rows = get_grocery_list_csv(data_dir)
+        if not rows:
+            return "No grocery list found."
+        lines = ["| Run | Category | Item | Quantity (g) | Est. Price (€) |", "|---|---|---|---|---|"]
+        for r in rows:
+            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {r.get('Quantity_g')}g | €{r.get('Estimated_Price_EUR')} |")
+        return "\n".join(lines)
+
+    def tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str:
+        """Updates or replaces the active grocery list CSV.
+        
+        Use this tool to shift grocery runs dynamically to the date on-hand stock runs out (D_exhaust)
+        and prune redundant meats.
+        
+        Args:
+            grocery_entries: List of items [{'Run': '2026-10-13 Run', 'Category': 'meat', 'Item': 'Chicken Breast', 'Quantity_g': 1000, 'Estimated_Price_EUR': 9.50}]
+            mode: 'replace' to overwrite the whole list with shifted runs, or 'merge' to update items (Quantity_g <= 0 prunes the item).
+        """
+        res = update_grocery_list_csv(data_dir, grocery_entries, mode=mode)
+        return res.get("message", "Grocery list updated.")
+
+    def tool_get_batch_cook() -> str:
+        """Reads the active batch cook CSV."""
+        rows = get_batch_cook_csv(data_dir)
+        if not rows:
+            return "No batch cook instructions found."
+        lines = ["| Dish | Ingredient | Grocery Run | Prep Day | Days Served |", "|---|---|---|---|---|"]
+        for r in rows:
+            lines.append(f"| {r.get('Dish')} | {r.get('Ingredient')} | {r.get('Grocery_Run')} | {r.get('Prep_Day')} | {r.get('Days_Served')} |")
+        return "\n".join(lines)
+
+    def tool_update_batch_cook(dishes: list[dict]) -> str:
+        """Updates the active batch cook CSV."""
+        res = update_batch_cook_csv(data_dir, dishes)
+        return res.get("message", "Batch cook instructions updated.")
+
+    def tool_lookup_food_catalog(query: str = "") -> str:
+        """Looks up ingredients in the food catalog to check protein density, calories, package sizes, and unit prices."""
+        try:
+            catalog, _ = load_catalog(data_dir=data_dir)
+        except Exception:
+            return "Food catalog could not be loaded."
+        
+        q = query.strip().lower()
+        results = []
+        for ing in catalog.values():
+            if not q or q in ing.name.lower() or q in ing.category.lower() or q in ing.id.lower():
+                results.append(
+                    f"- {ing.name} ({ing.category}): {ing.protein_per_100g}g P / {ing.carbs_per_100g}g C / {ing.fat_per_100g}g F "
+                    f"({ing.calories_per_100g:.0f} kcal per 100g). Pack: {int(round(ing.package_size_g))}g, €{ing.unit_price_eur:.2f}."
+                )
+        if not results:
+            return f"No ingredients matching '{query}' found in catalog."
+        return f"Catalog Ingredients (matching '{query}'):\n" + "\n".join(results[:25])
+
     return [
         tool_save_memory_note,
         tool_onboard_user,
         tool_configure_planning_schedule,
         tool_generate_meal_plan,
+        tool_get_inventory,
+        tool_update_on_hand_stock,
+        tool_catch_up_inventory,
+        tool_report_past_meal_deviation,
+        tool_get_macro_targets,
+        tool_get_meal_plan,
+        tool_update_meal_plan,
+        tool_get_grocery_list,
+        tool_update_grocery_list,
+        tool_get_batch_cook,
+        tool_update_batch_cook,
+        tool_lookup_food_catalog,
         tool_report_meal_deviation,
         tool_substitute_ingredient,
         tool_log_price_update,
