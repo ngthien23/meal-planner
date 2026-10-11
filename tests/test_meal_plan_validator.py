@@ -101,7 +101,29 @@ class TestMealPlanValidator(unittest.TestCase):
         res_adjusted = check_meal_plan_csv(self.test_dir)
         self.assertTrue(res_adjusted["accepted"])
         self.assertIn("[ACCEPTED]", res_adjusted["message"])
-        self.assertIn("Carried adjustment from last week: +1000 kcal, +70g P", res_adjusted["message"])
+        self.assertIn("Carried adjustment from last week: +1000 kcal, +70P", res_adjusted["message"])
+
+    def test_check_meal_plan_with_carried_pcf_notation_without_grams(self):
+        """Verifies that carried deficit with P/C/F notation (e.g. +70P, +50C, +20F) in weekly memory parses correctly."""
+        self.mem_mgr.add_note("Target Calories: 2500 kcal", tier="long_term")
+        self.mem_mgr.add_note("Protein: 150g, Carbs: 280g, Fat: 70g", tier="long_term")
+
+        # Note in weekly memory with direct P/C/F notation (no grams)
+        self.mem_mgr.add_note("[2026-10-12] Carried deficit from last week: +1000 kcal, +70P, +50C, +20F to eat", tier="weekly")
+
+        meals = []
+        for i in range(12, 19):
+            date_str = f"2026-10-{i}"
+            meals.append({"Date": date_str, "Meal": "Lunch", "Recipe": "Meal", "Ingredient": "Food", "P": 150, "C": 280, "F": 70, "Calories": 2500})
+        # Add carried deficit to meals
+        meals.append({"Date": "2026-10-18", "Meal": "Snack", "Recipe": "Extra", "Ingredient": "Whey & Oats", "P": 70, "C": 50, "F": 20, "Calories": 1000})
+        update_meal_plan_csv(self.test_dir, meals)
+
+        res = check_meal_plan_csv(self.test_dir)
+        self.assertTrue(res["accepted"])
+        self.assertIn("[ACCEPTED]", res["message"])
+        self.assertIn("+1000 kcal, +70P, +50C, +20F", res["message"])
+
 
     def test_check_meal_plan_with_carried_surplus_to_cut_from_last_week(self):
         """Verifies that carried surplus from last week in weekly memory decreases the target calories to be cut."""

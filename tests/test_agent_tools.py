@@ -31,6 +31,8 @@ class TestAgentTools(unittest.TestCase):
         self.assertIn("Local Time:", prompt)
         self.assertIn("raw/dry ingredient weights", prompt)
         self.assertNotIn("Dietary Bans:", prompt)
+        self.assertIn("MACRONUTRIENT NOTATION (NO GRAMS FOR P/C/F)", prompt)
+        self.assertIn("40P", prompt)
 
     def test_tool_execution_flow(self):
         test_dir = "tests/test_agent_flow"

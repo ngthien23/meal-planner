@@ -599,7 +599,7 @@ def check_meal_plan_csv(
             else:
                 carried_cals += val * default_mult
 
-        for pm in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*g\s*(?:protein|p\b)", note, re.I):
+        for pm in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*(?:g\s*protein|g\s*p\b|p\b)", note, re.I):
             val_str = pm.group(1)
             val = float(val_str)
             if val_str.startswith("+"):
@@ -609,7 +609,7 @@ def check_meal_plan_csv(
             else:
                 carried_p += val * default_mult
 
-        for c_m in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*g\s*(?:carbs?|c\b)", note, re.I):
+        for c_m in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*(?:g\s*carbs?|g\s*c\b|c\b)", note, re.I):
             val_str = c_m.group(1)
             val = float(val_str)
             if val_str.startswith("+"):
@@ -619,7 +619,7 @@ def check_meal_plan_csv(
             else:
                 carried_c += val * default_mult
 
-        for fm in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*g\s*(?:fat|f\b)", note, re.I):
+        for fm in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*(?:g\s*fat|g\s*f\b|f\b)", note, re.I):
             val_str = fm.group(1)
             val = float(val_str)
             if val_str.startswith("+"):
@@ -654,11 +654,11 @@ def check_meal_plan_csv(
     if planned_p < (target_p - p_buffer_low):
         diff = target_p - planned_p
         pct = (diff / target_p) * 100 if target_p > 0 else 0
-        discrepancies.append(f"Protein too low: Planned {int(planned_p)}g vs Target {int(target_p)}g (deficit of {int(diff)}g, -{pct:.1f}%). Consider adding high-protein ingredients or whey shakes.")
+        discrepancies.append(f"Protein too low: Planned {int(planned_p)}P vs Target {int(target_p)}P (deficit of {int(diff)}P, -{pct:.1f}%). Consider adding high-protein ingredients or whey shakes.")
     elif planned_p > (target_p + p_buffer_high):
         diff = planned_p - target_p
         pct = (diff / target_p) * 100 if target_p > 0 else 0
-        discrepancies.append(f"Protein too high: Planned {int(planned_p)}g vs Target {int(target_p)}g (surplus of {int(diff)}g, +{pct:.1f}%).")
+        discrepancies.append(f"Protein too high: Planned {int(planned_p)}P vs Target {int(target_p)}P (surplus of {int(diff)}P, +{pct:.1f}%).")
 
     # Carbs: tolerance ±10% (buffer at least 30g)
     if target_c > 0:
@@ -666,11 +666,11 @@ def check_meal_plan_csv(
         if planned_c < (target_c - c_buffer):
             diff = target_c - planned_c
             pct = (diff / target_c) * 100
-            discrepancies.append(f"Carbs too low: Planned {int(planned_c)}g vs Target {int(target_c)}g (deficit of {int(diff)}g, -{pct:.1f}%).")
+            discrepancies.append(f"Carbs too low: Planned {int(planned_c)}C vs Target {int(target_c)}C (deficit of {int(diff)}C, -{pct:.1f}%).")
         elif planned_c > (target_c + c_buffer):
             diff = planned_c - target_c
             pct = (diff / target_c) * 100
-            discrepancies.append(f"Carbs too high: Planned {int(planned_c)}g vs Target {int(target_c)}g (surplus of {int(diff)}g, +{pct:.1f}%).")
+            discrepancies.append(f"Carbs too high: Planned {int(planned_c)}C vs Target {int(target_c)}C (surplus of {int(diff)}C, +{pct:.1f}%).")
 
     # Fat: tolerance ±10% (buffer at least 15g)
     if target_f > 0:
@@ -678,11 +678,11 @@ def check_meal_plan_csv(
         if planned_f < (target_f - f_buffer):
             diff = target_f - planned_f
             pct = (diff / target_f) * 100
-            discrepancies.append(f"Fat too low: Planned {int(planned_f)}g vs Target {int(target_f)}g (deficit of {int(diff)}g, -{pct:.1f}%).")
+            discrepancies.append(f"Fat too low: Planned {int(planned_f)}F vs Target {int(target_f)}F (deficit of {int(diff)}F, -{pct:.1f}%).")
         elif planned_f > (target_f + f_buffer):
             diff = planned_f - target_f
             pct = (diff / target_f) * 100
-            discrepancies.append(f"Fat too high: Planned {int(planned_f)}g vs Target {int(target_f)}g (surplus of {int(diff)}g, +{pct:.1f}%).")
+            discrepancies.append(f"Fat too high: Planned {int(planned_f)}F vs Target {int(target_f)}F (surplus of {int(diff)}F, +{pct:.1f}%).")
 
     carried_str = ""
     if carried_cals != 0 or carried_p != 0 or carried_c != 0 or carried_f != 0:
@@ -690,18 +690,18 @@ def check_meal_plan_csv(
         if carried_cals != 0:
             parts.append(f"{int(carried_cals):+d} kcal")
         if carried_p != 0:
-            parts.append(f"{int(carried_p):+d}g P")
+            parts.append(f"{int(carried_p):+d}P")
         if carried_c != 0:
-            parts.append(f"{int(carried_c):+d}g C")
+            parts.append(f"{int(carried_c):+d}C")
         if carried_f != 0:
-            parts.append(f"{int(carried_f):+d}g F")
+            parts.append(f"{int(carried_f):+d}F")
         carried_str = f"  (Base: {int(daily_calories * num_days)} kcal, Carried adjustment from last week: {', '.join(parts)})\n"
 
     if not discrepancies:
         msg = (
             f"[ACCEPTED] Weekly meal plan matches nutritional goals within acceptable approximation!\n"
-            f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}g P | {int(planned_c)}g C | {int(planned_f)}g F\n"
-            f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}g P | {int(target_c)}g C | {int(target_f)}g F\n"
+            f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}P | {int(planned_c)}C | {int(planned_f)}F\n"
+            f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}P | {int(target_c)}C | {int(target_f)}F\n"
             f"{carried_str}"
             f"Everything checked. The meal plan is approved."
         )
@@ -719,8 +719,8 @@ def check_meal_plan_csv(
             f"[NEEDS FIXING] Weekly meal plan does not approximate the target goals:\n"
             f"{issues_str}\n\n"
             f"Summary:\n"
-            f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}g P | {int(planned_c)}g C | {int(planned_f)}g F\n"
-            f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}g P | {int(target_c)}g C | {int(target_f)}g F\n"
+            f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}P | {int(planned_c)}C | {int(planned_f)}F\n"
+            f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}P | {int(target_c)}C | {int(target_f)}F\n"
             f"{carried_str}\n"
             f"Request: Please adjust the meal plan using tool_update_meal_plan to fix these discrepancies, then re-check with tool_check_meal_plan."
         )
