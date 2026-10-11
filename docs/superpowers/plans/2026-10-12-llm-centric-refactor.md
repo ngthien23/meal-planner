@@ -16,7 +16,7 @@
 - Weekly grocery list includes all food types and is sorted by `[Run, Category]`.
 - The agent must always ask the user for confirmation before executing `tool_update_grocery_list`.
 - The current local time is recorded once at session initialization; system instructions are passed as a static string.
-- All tools must strictly be pure I/O primitives interacting with memory or artifacts (7 tools total).
+- All tools must strictly interact with memory or artifacts (8 tools: 7 pure I/O primitives + 1 meal plan verification tool).
 
 ## Review Focus
 1. Independence from deleted modules: Ensure remaining files (`agent.py`, `cli.py`, `artifacts.py`, `memory.py`) have zero imports from deleted legacy modules.

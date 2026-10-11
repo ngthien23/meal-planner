@@ -12,6 +12,7 @@ All planning, recipe design, macro balancing, price estimation, and substitution
   1. **Consider the Budget:** Base grocery planning around the user's weekly budget for protein (e.g. €40–€50/week) stored in Long-Term Memory. Estimate ingredient costs using internal knowledge and web browsing.
   2. **Balance Needs & Preferences:** Allocate budget to core protein essentials first (chicken, eggs, meat, fish, tofu, whey powder), balanced with personal qualitative preferences stored in Long-Term Memory. Daily macros are treated as rough targets with even meat portioning prioritized over decimal precision; deficits are topped up with protein powder.
   3. **Nutrition Nuances:** Account for raw vs. cooked weight yields, bone-in/skin-on fractions, and edible portions without requiring a local nutrition facts database.
+  4. **Plan Verification:** After generating or updating a weekly meal plan, execute `tool_check_meal_plan` to verify that weekly total planned calories and P/C/F approximate nutritional goals (including carried deficits to eat or surpluses to cut from last week). If discrepancies are detected (`[NEEDS FIXING]`), adjust the meal plan using `tool_update_meal_plan` until accepted (`[ACCEPTED]`).
 - **Stock Tracking Scope vs. Grocery List Scope:**
   - **On-Hand Stock:** Tracked in Short-Term Memory (`weekly.md`) strictly for **PROTEIN ONLY** (meats, fish, eggs, tofu, protein powder) with dates. Non-protein items (produce, carbs, oils) are ignored for fridge stock bookkeeping.
   - **Weekly Grocery List:** Must comprehensively include **ALL** food types (proteins, carbs, vegetables, fruits, pantry staples, seasonings).
@@ -46,18 +47,19 @@ All operational plans are written directly to and read from CSV files in `data/p
 
 ---
 
-## 5. Tool Suite: Pure I/O Primitives
-The agent interacts with the filesystem through exactly 7 pure I/O tools:
+## 5. Tool Suite: Pure I/O Primitives & Plan Validator
+The agent interacts with the filesystem through exactly 8 tools:
 1. `tool_save_memory_note(note: str, tier: str)`: Saves meaningful notes to `weekly` or `long_term` memory.
 2. `tool_get_meal_plan(target_date: Optional[str])`: Reads the active meal plan CSV (returns empty if file does not exist).
 3. `tool_update_meal_plan(meal_entries: list[dict])`: Writes or updates rows in the active meal plan CSV.
-4. `tool_get_grocery_list()`: Reads the active grocery list CSV.
-5. `tool_update_grocery_list(grocery_entries: list[dict], mode: str)`: Writes or updates rows in the active grocery list CSV and sorts by `[Run, Category]`.
+4. `tool_check_meal_plan(target_calories: Optional[float], target_p: Optional[float], target_c: Optional[float], target_f: Optional[float])`: Verifies that the weekly meal plan sums approximate the target weekly calories and P/C/F goals (including carried deficits to eat or surpluses to cut from last week recorded in memory). Requests the agent to fix if discrepancies are found (`[NEEDS FIXING]`), and accepts if everything checks out (`[ACCEPTED]`).
+5. `tool_get_grocery_list()`: Reads the active grocery list CSV.
+6. `tool_update_grocery_list(grocery_entries: list[dict], mode: str)`: Writes or updates rows in the active grocery list CSV and sorts by `[Run, Category]`.
    - **User Confirmation Required:** The agent must always ask the user for confirmation before executing `tool_update_grocery_list`.
-6. `tool_get_batch_cook()`: Reads the active batch cook CSV.
-7. `tool_update_batch_cook(dishes: list[dict])`: Writes or updates rows in the active batch cook CSV.
+7. `tool_get_batch_cook()`: Reads the active batch cook CSV.
+8. `tool_update_batch_cook(dishes: list[dict])`: Writes or updates rows in the active batch cook CSV.
 
-No tools perform algorithmic calculations, combinatorial recipe solving, or programmatic decision-making.
+No tools perform algorithmic calculations, combinatorial recipe solving, or programmatic decision-making; the LLM remains the sole chef and planner.
 
 ---
 

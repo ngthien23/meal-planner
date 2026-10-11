@@ -58,6 +58,7 @@ class TestAuditAndInstructionTime(unittest.TestCase):
             "tool_update_grocery_list",
             "tool_get_batch_cook",
             "tool_update_batch_cook",
+            "tool_check_meal_plan",
         }
         self.assertEqual(tool_names, expected_tools)
 

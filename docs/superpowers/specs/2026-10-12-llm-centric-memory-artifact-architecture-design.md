@@ -82,14 +82,15 @@ meal_planner/
 
 ---
 
-## 4. Agent Tools (7 Pure I/O Primitives)
+## 4. Agent Tools (8 Tools: 7 Pure I/O Primitives + 1 Plan Validator)
 1. `tool_save_memory_note(note: str, tier: str = "weekly") -> str`: Saves note to `weekly.md` or `long_term.md`.
 2. `tool_get_meal_plan(target_date: Optional[str] = None) -> str`: Reads active `meal_plan.csv`.
 3. `tool_update_meal_plan(meal_entries: list[dict]) -> str`: Updates active `meal_plan.csv`.
-4. `tool_get_grocery_list() -> str`: Reads active `grocery_list.csv`.
-5. `tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str`: Updates active `grocery_list.csv` (sorted by Run, Category).
-6. `tool_get_batch_cook() -> str`: Reads active `batch_cook.csv`.
-7. `tool_update_batch_cook(dishes: list[dict]) -> str`: Updates active `batch_cook.csv`.
+4. `tool_check_meal_plan(target_calories: Optional[float] = None, target_p: Optional[float] = None, target_c: Optional[float] = None, target_f: Optional[float] = None) -> str`: Verifies that weekly planned calories and macros approximate goals (including carried deficits/surpluses from last week in memory), returning `[ACCEPTED]` or `[NEEDS FIXING]`.
+5. `tool_get_grocery_list() -> str`: Reads active `grocery_list.csv`.
+6. `tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str`: Updates active `grocery_list.csv` (sorted by Run, Category).
+7. `tool_get_batch_cook() -> str`: Reads active `batch_cook.csv`.
+8. `tool_update_batch_cook(dishes: list[dict]) -> str`: Updates active `batch_cook.csv`.
 
 ---
 

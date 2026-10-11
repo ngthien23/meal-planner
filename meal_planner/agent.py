@@ -12,6 +12,7 @@ from meal_planner.tools.artifacts import (
     update_grocery_list_csv,
     get_batch_cook_csv,
     update_batch_cook_csv,
+    check_meal_plan_csv,
 )
 
 _RECORDED_CURRENT_TIME: Optional[datetime] = None
@@ -82,6 +83,7 @@ def build_system_instruction(
   3. Once the user replies with their preferences:
      - Call `tool_save_memory_note(note, tier='long_term')` to record each of their profile stats, macro guidelines, protein budget, and qualitative eating preferences into Long-Term Memory.
      - Design their initial 7-day meal plan and grocery list, and write them directly to the artifacts via `tool_update_meal_plan(...)` and `tool_update_grocery_list(...)`.
+     - Verify the meal plan using `tool_check_meal_plan()`. If discrepancies are reported, fix them until approved.
      - Point the user to the newly generated plan file: {active_plan_csv}."""
 
     return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant.
@@ -196,6 +198,10 @@ CORE PLANNING PRINCIPLES & WORKFLOW:
        3. `Meals`: How many meals this batch covers (e.g. 3).
      * Ditch legacy columns: do not include grocery run dates, prep days, or non-protein ingredients in the batch cook artifact.
 8. Raw Weights: All recipes dictate raw/dry ingredient weights.
+9. PLAN VERIFICATION & APPROVAL:
+   - Always run `tool_check_meal_plan()` after creating or significantly modifying a weekly meal plan.
+   - The tool verifies that weekly total planned calories and P/C/F approximate nutritional goals, including carried deficits or surpluses from last week.
+   - If `tool_check_meal_plan()` returns `[NEEDS FIXING]`, adjust the meal plan using `tool_update_meal_plan` to resolve the discrepancies, then re-check until `[ACCEPTED]`.
 """
 
 def get_agent_tools(data_dir: str = "data") -> list[Callable]:
@@ -297,6 +303,33 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         res = update_batch_cook_csv(data_dir, dishes)
         return res.get("message", "Batch cook instructions updated.")
 
+    def tool_check_meal_plan(
+        target_calories: Optional[float] = None,
+        target_p: Optional[float] = None,
+        target_c: Optional[float] = None,
+        target_f: Optional[float] = None
+    ) -> str:
+        """Checks the weekly meal plan sums against target calories and macros (P/C/F).
+        
+        Verifies that weekly total planned calories and P/C/F approximate the nutritional
+        goals, including carried deficits or surpluses from last week recorded in memory.
+        Returns [ACCEPTED] if approved, or [NEEDS FIXING] with discrepancies to fix.
+        
+        Args:
+            target_calories: Optional explicit weekly calorie goal. If omitted, derived from memory.
+            target_p: Optional explicit weekly protein goal (g). If omitted, derived from memory.
+            target_c: Optional explicit weekly carb goal (g). If omitted, derived from memory.
+            target_f: Optional explicit weekly fat goal (g). If omitted, derived from memory.
+        """
+        res = check_meal_plan_csv(
+            data_dir,
+            target_weekly_calories=target_calories,
+            target_weekly_p=target_p,
+            target_weekly_c=target_c,
+            target_weekly_f=target_f
+        )
+        return res["message"]
+
     return [
         tool_save_memory_note,
         tool_get_meal_plan,
@@ -305,6 +338,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         tool_update_grocery_list,
         tool_get_batch_cook,
         tool_update_batch_cook,
+        tool_check_meal_plan,
     ]
 
 def get_root_agent(data_dir: str = "data"):

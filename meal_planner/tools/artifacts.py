@@ -13,7 +13,8 @@ __all__ = [
     "get_grocery_list_csv",
     "update_grocery_list_csv",
     "get_batch_cook_csv",
-    "update_batch_cook_csv"
+    "update_batch_cook_csv",
+    "check_meal_plan_csv"
 ]
 
 def _resolve_plan_path(data_dir: str, filename_pattern: str, prefix: Optional[str] = None) -> str:
@@ -439,3 +440,282 @@ def update_batch_cook_csv(
         "file_path": path,
         "message": f"Successfully updated batch cook instructions ({len(clean_rows)} dishes)."
     }
+
+
+def check_meal_plan_csv(
+    data_dir: str,
+    target_weekly_calories: Optional[float] = None,
+    target_weekly_p: Optional[float] = None,
+    target_weekly_c: Optional[float] = None,
+    target_weekly_f: Optional[float] = None,
+    prefix: Optional[str] = None
+) -> dict:
+    """Checks the weekly meal plan sums against target calories and macros.
+    
+    Verifies that total planned weekly Calories, P, C, and F approximate the target
+    goals, including carried deficits or surpluses from last week recorded in memory.
+    
+    Args:
+        data_dir: Directory containing meal planner data.
+        target_weekly_calories: Optional explicit weekly calorie goal.
+        target_weekly_p: Optional explicit weekly protein goal (g).
+        target_weekly_c: Optional explicit weekly carb goal (g).
+        target_weekly_f: Optional explicit weekly fat goal (g).
+        prefix: Optional cycle prefix.
+        
+    Returns:
+        Result dict with 'status' ('ACCEPTED' or 'NEEDS_FIXING'), 'accepted' (bool),
+        'message', 'planned', 'target', and 'discrepancies'.
+    """
+    from meal_planner.tools.memory import MemoryManager
+
+    rows = get_meal_plan_csv(data_dir, prefix=prefix)
+    if not rows:
+        return {
+            "status": "NEEDS_FIXING",
+            "accepted": False,
+            "message": "[NEEDS FIXING] No meal plan found in meal_plan.csv. Please generate and save a meal plan using tool_update_meal_plan first.",
+            "planned": {"calories": 0.0, "P": 0.0, "C": 0.0, "F": 0.0},
+            "target": {"calories": 0.0, "P": 0.0, "C": 0.0, "F": 0.0},
+            "discrepancies": ["No meals planned."]
+        }
+
+    planned_calories = 0.0
+    planned_p = 0.0
+    planned_c = 0.0
+    planned_f = 0.0
+    unique_dates = set()
+
+    for r in rows:
+        d = r.get("Date", "").strip()
+        if d:
+            unique_dates.add(d)
+        try:
+            planned_calories += float(r.get("Calories", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+        try:
+            planned_p += float(r.get("P", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+        try:
+            planned_c += float(r.get("C", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+        try:
+            planned_f += float(r.get("F", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+
+    num_days = len(unique_dates) if len(unique_dates) > 0 else 7
+
+    # Load memory context for targets and carried numbers
+    mem_mgr = MemoryManager(data_dir)
+    mem_ctx = mem_mgr.get_context()
+    long_term_notes = mem_ctx.get("long_term", [])
+    weekly_notes = mem_ctx.get("weekly", [])
+
+    daily_calories = None
+    daily_p = None
+    daily_c = None
+    daily_f = None
+    bodyweight = None
+
+    for note in long_term_notes:
+        bw_m = re.search(r"(?:bodyweight|weight)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*kg", note, re.I)
+        if not bw_m:
+            bw_m = re.search(r"(\d+(?:\.\d+)?)\s*kg\b", note, re.I)
+        if bw_m and bodyweight is None:
+            bodyweight = float(bw_m.group(1))
+
+        cal_m = re.search(r"(?:target\s+calories|calories?)\s*[:=]?\s*(\d+(?:\.\d+)?)", note, re.I)
+        if not cal_m:
+            cal_m = re.search(r"(\d{3,4})\s*(?:kcal|calories)", note, re.I)
+        if cal_m and daily_calories is None:
+            daily_calories = float(cal_m.group(1))
+
+        p_m = re.search(r"(?:protein|target\s+protein)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
+        if not p_m:
+            p_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*protein", note, re.I)
+        if p_m and daily_p is None:
+            daily_p = float(p_m.group(1))
+
+        c_m = re.search(r"(?:carbs?|target\s+carbs?)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
+        if not c_m:
+            c_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*carbs?", note, re.I)
+        if c_m and daily_c is None:
+            daily_c = float(c_m.group(1))
+
+        f_m = re.search(r"(?:fat|target\s+fat)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
+        if not f_m:
+            f_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*fat", note, re.I)
+        if f_m and daily_f is None:
+            daily_f = float(f_m.group(1))
+
+    if daily_calories is None:
+        daily_calories = 2500.0
+    if daily_p is None:
+        daily_p = round(bodyweight * 2.2, 1) if bodyweight else 150.0
+    if daily_f is None:
+        daily_f = round(bodyweight * 0.9, 1) if bodyweight else round(daily_calories * 0.25 / 9.0, 1)
+    if daily_c is None:
+        daily_c = max(0.0, round((daily_calories - (daily_p * 4.0) - (daily_f * 9.0)) / 4.0, 1))
+
+    # Parse carried adjustments from weekly notes
+    carried_cals = 0.0
+    carried_p = 0.0
+    carried_c = 0.0
+    carried_f = 0.0
+
+    for note in weekly_notes:
+        n_lower = note.lower()
+        if not any(k in n_lower for k in ("carried", "deficit", "surplus", "last week", "missed", "to cut", "to eat", "rollover")):
+            continue
+
+        is_cut = any(k in n_lower for k in ("cut", "surplus", "reduce", "over")) and not any(k in n_lower for k in ("deficit", "to eat"))
+        default_mult = -1.0 if is_cut else 1.0
+
+        for cm in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*(?:kcal|calories)", note, re.I):
+            val_str = cm.group(1)
+            val = float(val_str)
+            if val_str.startswith("+"):
+                carried_cals += abs(val)
+            elif val_str.startswith("-"):
+                carried_cals -= abs(val)
+            else:
+                carried_cals += val * default_mult
+
+        for pm in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*g\s*(?:protein|p\b)", note, re.I):
+            val_str = pm.group(1)
+            val = float(val_str)
+            if val_str.startswith("+"):
+                carried_p += abs(val)
+            elif val_str.startswith("-"):
+                carried_p -= abs(val)
+            else:
+                carried_p += val * default_mult
+
+        for c_m in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*g\s*(?:carbs?|c\b)", note, re.I):
+            val_str = c_m.group(1)
+            val = float(val_str)
+            if val_str.startswith("+"):
+                carried_c += abs(val)
+            elif val_str.startswith("-"):
+                carried_c -= abs(val)
+            else:
+                carried_c += val * default_mult
+
+        for fm in re.finditer(r"([+-]?\d+(?:\.\d+)?)\s*g\s*(?:fat|f\b)", note, re.I):
+            val_str = fm.group(1)
+            val = float(val_str)
+            if val_str.startswith("+"):
+                carried_f += abs(val)
+            elif val_str.startswith("-"):
+                carried_f -= abs(val)
+            else:
+                carried_f += val * default_mult
+
+    # Determine effective weekly targets
+    target_cals = target_weekly_calories if target_weekly_calories is not None else ((daily_calories * num_days) + carried_cals)
+    target_p = target_weekly_p if target_weekly_p is not None else ((daily_p * num_days) + carried_p)
+    target_c = target_weekly_c if target_weekly_c is not None else ((daily_c * num_days) + carried_c)
+    target_f = target_weekly_f if target_weekly_f is not None else ((daily_f * num_days) + carried_f)
+
+    discrepancies = []
+
+    # Calories: tolerance ±5% (buffer at least 150 kcal across week)
+    cal_buffer = max(150.0, target_cals * 0.05)
+    if planned_calories < (target_cals - cal_buffer):
+        diff = target_cals - planned_calories
+        pct = (diff / target_cals) * 100 if target_cals > 0 else 0
+        discrepancies.append(f"Calories too low: Planned {int(planned_calories)} kcal vs Target {int(target_cals)} kcal (deficit of {int(diff)} kcal, -{pct:.1f}%).")
+    elif planned_calories > (target_cals + cal_buffer):
+        diff = planned_calories - target_cals
+        pct = (diff / target_cals) * 100 if target_cals > 0 else 0
+        discrepancies.append(f"Calories too high: Planned {int(planned_calories)} kcal vs Target {int(target_cals)} kcal (surplus of {int(diff)} kcal, +{pct:.1f}%).")
+
+    # Protein: tolerance -5% to +10% (buffer at least 15g)
+    p_buffer_low = max(15.0, target_p * 0.05)
+    p_buffer_high = max(25.0, target_p * 0.10)
+    if planned_p < (target_p - p_buffer_low):
+        diff = target_p - planned_p
+        pct = (diff / target_p) * 100 if target_p > 0 else 0
+        discrepancies.append(f"Protein too low: Planned {int(planned_p)}g vs Target {int(target_p)}g (deficit of {int(diff)}g, -{pct:.1f}%). Consider adding high-protein ingredients or whey shakes.")
+    elif planned_p > (target_p + p_buffer_high):
+        diff = planned_p - target_p
+        pct = (diff / target_p) * 100 if target_p > 0 else 0
+        discrepancies.append(f"Protein too high: Planned {int(planned_p)}g vs Target {int(target_p)}g (surplus of {int(diff)}g, +{pct:.1f}%).")
+
+    # Carbs: tolerance ±10% (buffer at least 30g)
+    if target_c > 0:
+        c_buffer = max(30.0, target_c * 0.10)
+        if planned_c < (target_c - c_buffer):
+            diff = target_c - planned_c
+            pct = (diff / target_c) * 100
+            discrepancies.append(f"Carbs too low: Planned {int(planned_c)}g vs Target {int(target_c)}g (deficit of {int(diff)}g, -{pct:.1f}%).")
+        elif planned_c > (target_c + c_buffer):
+            diff = planned_c - target_c
+            pct = (diff / target_c) * 100
+            discrepancies.append(f"Carbs too high: Planned {int(planned_c)}g vs Target {int(target_c)}g (surplus of {int(diff)}g, +{pct:.1f}%).")
+
+    # Fat: tolerance ±10% (buffer at least 15g)
+    if target_f > 0:
+        f_buffer = max(15.0, target_f * 0.10)
+        if planned_f < (target_f - f_buffer):
+            diff = target_f - planned_f
+            pct = (diff / target_f) * 100
+            discrepancies.append(f"Fat too low: Planned {int(planned_f)}g vs Target {int(target_f)}g (deficit of {int(diff)}g, -{pct:.1f}%).")
+        elif planned_f > (target_f + f_buffer):
+            diff = planned_f - target_f
+            pct = (diff / target_f) * 100
+            discrepancies.append(f"Fat too high: Planned {int(planned_f)}g vs Target {int(target_f)}g (surplus of {int(diff)}g, +{pct:.1f}%).")
+
+    carried_str = ""
+    if carried_cals != 0 or carried_p != 0 or carried_c != 0 or carried_f != 0:
+        parts = []
+        if carried_cals != 0:
+            parts.append(f"{int(carried_cals):+d} kcal")
+        if carried_p != 0:
+            parts.append(f"{int(carried_p):+d}g P")
+        if carried_c != 0:
+            parts.append(f"{int(carried_c):+d}g C")
+        if carried_f != 0:
+            parts.append(f"{int(carried_f):+d}g F")
+        carried_str = f"  (Base: {int(daily_calories * num_days)} kcal, Carried adjustment from last week: {', '.join(parts)})\n"
+
+    if not discrepancies:
+        msg = (
+            f"[ACCEPTED] Weekly meal plan matches nutritional goals within acceptable approximation!\n"
+            f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}g P | {int(planned_c)}g C | {int(planned_f)}g F\n"
+            f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}g P | {int(target_c)}g C | {int(target_f)}g F\n"
+            f"{carried_str}"
+            f"Everything checked. The meal plan is approved."
+        )
+        return {
+            "status": "ACCEPTED",
+            "accepted": True,
+            "message": msg,
+            "planned": {"calories": planned_calories, "P": planned_p, "C": planned_c, "F": planned_f},
+            "target": {"calories": target_cals, "P": target_p, "C": target_c, "F": target_f},
+            "discrepancies": []
+        }
+    else:
+        issues_str = "\n".join(f"- {d}" for d in discrepancies)
+        msg = (
+            f"[NEEDS FIXING] Weekly meal plan does not approximate the target goals:\n"
+            f"{issues_str}\n\n"
+            f"Summary:\n"
+            f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}g P | {int(planned_c)}g C | {int(planned_f)}g F\n"
+            f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}g P | {int(target_c)}g C | {int(target_f)}g F\n"
+            f"{carried_str}\n"
+            f"Request: Please adjust the meal plan using tool_update_meal_plan to fix these discrepancies, then re-check with tool_check_meal_plan."
+        )
+        return {
+            "status": "NEEDS_FIXING",
+            "accepted": False,
+            "message": msg,
+            "planned": {"calories": planned_calories, "P": planned_p, "C": planned_c, "F": planned_f},
+            "target": {"calories": target_cals, "P": target_p, "C": target_c, "F": target_f},
+            "discrepancies": discrepancies
+        }
+

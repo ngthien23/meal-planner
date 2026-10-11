@@ -19,7 +19,7 @@ class TestAdkPlayground(unittest.TestCase):
         self.assertEqual(root_agent.name, "meal_planner")
         self.assertEqual(root_agent.model, "gemini-3.8-flash")
         tool_names = [t.__name__ for t in root_agent.tools]
-        self.assertEqual(len(root_agent.tools), 7)
+        self.assertEqual(len(root_agent.tools), 8)
         self.assertIn("tool_save_memory_note", tool_names)
         self.assertNotIn("tool_get_macro_targets", tool_names)
         self.assertIn("tool_get_meal_plan", tool_names)
@@ -28,6 +28,7 @@ class TestAdkPlayground(unittest.TestCase):
         self.assertIn("tool_update_grocery_list", tool_names)
         self.assertIn("tool_get_batch_cook", tool_names)
         self.assertIn("tool_update_batch_cook", tool_names)
+        self.assertIn("tool_check_meal_plan", tool_names)
 
     def test_relevant_startup_hydration_only(self):
         # Setup test data directory with weekly memory and a long-term note

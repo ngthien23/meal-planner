@@ -7,7 +7,7 @@ class TestAgentTools(unittest.TestCase):
     def test_agent_tools_registered(self):
         tools = get_agent_tools()
         tool_names = [t.__name__ for t in tools]
-        self.assertEqual(len(tool_names), 7)
+        self.assertEqual(len(tool_names), 8)
         self.assertIn("tool_save_memory_note", tool_names)
         self.assertNotIn("tool_get_macro_targets", tool_names)
         self.assertIn("tool_get_meal_plan", tool_names)
@@ -16,6 +16,7 @@ class TestAgentTools(unittest.TestCase):
         self.assertIn("tool_update_grocery_list", tool_names)
         self.assertIn("tool_get_batch_cook", tool_names)
         self.assertIn("tool_update_batch_cook", tool_names)
+        self.assertIn("tool_check_meal_plan", tool_names)
 
         # Legacy programmatic solvers must not be registered
         self.assertNotIn("tool_generate_meal_plan", tool_names)
