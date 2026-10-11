@@ -62,7 +62,7 @@ On Windows, you can also run `.\meals` (PowerShell) or `meals.bat`. On macOS/Lin
   - `meal_plan.csv` : Daily recipes and rough macronutrient targets.
   - `batch_cook.csv` : Batch dishes, primary protein amounts, and meal counts.
   - `grocery_list.csv` : Split grocery runs sorted by run and category.
-- **Grocery Updates:** The agent reasons about changes (e.g. after shifting runs or using on-hand stock) and asks for your confirmation before updating the grocery list.
+- **Grocery Updates:** The agent reasons about changes (e.g. shifting runs when using on-hand stock) and updates the split grocery list directly.
 
 ---
 

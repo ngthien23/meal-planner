@@ -154,12 +154,12 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("Weekly Grocery List", prompt)
         self.assertIn("MUST comprehensively include ALL food types", prompt)
 
-    def test_grocery_list_requires_user_confirmation_in_prompt(self):
+    def test_grocery_list_update_guidelines_in_prompt(self):
         prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
-        self.assertIn("USER CONFIRMATION REQUIRED", prompt)
-        self.assertIn("BEFORE updating the grocery list", prompt)
-        self.assertIn("ask the user for confirmation", prompt)
+        self.assertNotIn("USER CONFIRMATION REQUIRED", prompt)
+        self.assertNotIn("ask the user for confirmation", prompt)
         self.assertIn("tool_get_grocery_list", prompt)
+        self.assertIn("tool_update_grocery_list", prompt)
         self.assertIn("sorted by [Run, Category]", prompt)
 
 

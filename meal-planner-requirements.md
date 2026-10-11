@@ -56,7 +56,6 @@ The agent interacts with the filesystem through exactly 8 tools:
 4. `tool_check_meal_plan(target_calories: Optional[float], target_p: Optional[float], target_c: Optional[float], target_f: Optional[float])`: Verifies that the weekly meal plan sums approximate the target weekly calories and P/C/F goals (including carried deficits to eat or surpluses to cut from last week recorded in memory). Requests the agent to fix if discrepancies are found (`[NEEDS FIXING]`), and accepts if everything checks out (`[ACCEPTED]`).
 5. `tool_get_grocery_list()`: Reads the active grocery list CSV.
 6. `tool_update_grocery_list(grocery_entries: list[dict], mode: str)`: Writes or updates rows in the active grocery list CSV and sorts by `[Run, Category]`.
-   - **User Confirmation Required:** The agent must always ask the user for confirmation before executing `tool_update_grocery_list`.
 7. `tool_get_batch_cook()`: Reads the active batch cook CSV.
 8. `tool_update_batch_cook(dishes: list[dict])`: Writes or updates rows in the active batch cook CSV.
 
