@@ -1,10 +1,15 @@
 import unittest
 import os
+import shutil
+import tempfile
 from unittest.mock import patch
 from meal_planner.cli import ensure_api_key
 
 class TestCliApiKey(unittest.TestCase):
     def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.env_patcher = patch("meal_planner.cli.ENV_PATH", os.path.join(self.test_dir, ".env"))
+        self.env_patcher.start()
         self.orig_key = os.environ.get("GEMINI_API_KEY")
         self.orig_google_key = os.environ.get("GOOGLE_API_KEY")
         if "GEMINI_API_KEY" in os.environ:
@@ -13,6 +18,9 @@ class TestCliApiKey(unittest.TestCase):
             del os.environ["GOOGLE_API_KEY"]
 
     def tearDown(self):
+        self.env_patcher.stop()
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
         if self.orig_key:
             os.environ["GEMINI_API_KEY"] = self.orig_key
         elif "GEMINI_API_KEY" in os.environ:
