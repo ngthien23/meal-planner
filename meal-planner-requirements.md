@@ -1,51 +1,73 @@
-AI Meal & Grocery Planner Agent: Requirements Specification
+# AI Meal & Grocery Planner Agent: Requirements Specification
 
-1. Core Objective
-To act as a dynamic, highly personalized dietary and financial planner that generates macro-accurate meal schedules and zero-waste grocery lists. The agent must prioritize the user's specific lifestyle constraints, including powerlifting nutritional targets, budget optimization, and texture-based eating habits (e.g., chewing fatigue).
+## 1. Core Objective
+To act as an intelligent, conversational dietary, logistics, and grocery planning assistant powered by Google ADK and Gemini. The LLM is the chef, nutritionist, and decision-maker. It dynamically designs weekly meal schedules, manages protein stock, and balances budgets based on the user's conversational input and preferences, using simple Markdown memories and CSV artifacts without rigid algorithmic rule engines.
 
-2. Module 1: Preference & Profile Management (Understanding Preferences)
-The agent must store, recall, and actively apply a complex set of user preferences:
+---
 
-Texture & Fatigue Rules: Must schedule soft, liquid, or broth-based meals (e.g., Phở, thinly sliced meat in hot broth) for breakfasts and dinners. Solid, batch-cooked savory meals are strictly for lunch.
+## 2. Core Architecture: LLM as Planner & Decision-Maker
+All planning, recipe design, macro balancing, price estimation, and substitution decisions are performed by LLM reasoning, not Python algorithmic heuristics or local databases:
+- **No Programmatic Solvers:** No combinatorial recipe engines, hardcoded ingredient catalogs, or rigid macro constraint solvers in Python.
+- **LLM Train of Thought:** When planning or adapting meals:
+  1. **Consider the Budget:** Base grocery planning around the user's weekly budget for protein (e.g. €40–€50/week) stored in Long-Term Memory. Estimate ingredient costs using internal knowledge and web browsing.
+  2. **Balance Needs & Preferences:** Allocate budget to core protein essentials first (chicken, eggs, meat, fish, tofu, whey powder), balanced with personal qualitative preferences stored in Long-Term Memory. Daily macros are treated as rough targets with even meat portioning prioritized over decimal precision; deficits are topped up with protein powder.
+  3. **Nutrition Nuances:** Account for raw vs. cooked weight yields, bone-in/skin-on fractions, and edible portions without requiring a local nutrition facts database.
+- **Stock Tracking Scope vs. Grocery List Scope:**
+  - **On-Hand Stock:** Tracked in Short-Term Memory (`weekly.md`) strictly for **PROTEIN ONLY** (meats, fish, eggs, tofu, protein powder) with dates. Non-protein items (produce, carbs, oils) are ignored for fridge stock bookkeeping.
+  - **Weekly Grocery List:** Must comprehensively include **ALL** food types (proteins, carbs, vegetables, fruits, pantry staples, seasonings).
 
-Ingredient Restrictions: No dairy milk (fortified soy only due to acne), no non-Optimum Nutrition whey (digestive issues), no fresh tuna (canned only).
+---
 
-Flavor Profile: Heavy emphasis on Vietnamese cuisine (Thịt kho, Gà xào sả ớt) and savory profiles.
+## 3. Two-Tier Markdown Memory System
+Memory is maintained entirely in human-readable Markdown files in `data/memory/`:
+1. **Long-Term Memory (`data/memory/long_term.md`):**
+   - Durable user facts: bodyweight, fitness goal, daily target calories, weekly protein budget, lasting dietary preferences, food intolerances, and milestones.
+   - Populated during initial conversational onboarding and updated when user shares lasting habits.
+2. **Short-Term Memory (`data/memory/weekly.md`):**
+   - Active week context: dated on-hand protein stock (e.g. `- [YYYY-MM-DD] Stock on hand: 500g Chicken Thighs`), meal deviations (skipped meals, eating out), temporary schedule shifts, and carried calorie/protein deficits.
+   - Reset or archived per weekly planning cycle.
+3. **Noise Discrimination:**
+   - Trivial conversational pleasantries (e.g. "ok", "thank you", "sounds good", "hello") are filtered out to prevent memory pollution.
 
-Lifestyle Constraints: Batch cooking is limited to Sunday and Wednesday evenings. Workday lunches must be reheatable.
+---
 
-Timezone & Temporal Anchoring: Must prompt for and store the user's timezone during initial onboarding. Must maintain temporal awareness using the user's local timezone to interpret relative references (e.g., "today", "tonight", "tomorrow's lunch", "Thursday night").
+## 4. Human-Readable CSV Artifacts
+All operational plans are written directly to and read from CSV files in `data/plans/` (and mirrored to `data/` for active access):
+1. **Weekly Meal Plan (`meal_plan.csv`):**
+   - Columns: `Date, Meal, Recipe, Ingredient, P, C, F, Calories`
+   - All ingredient amounts in recipes dictate raw/dry weights.
+2. **Weekly Batch Cook Plan (`batch_cook.csv`):**
+   - Columns: `Dish, Main_Protein, Meals`
+   - Specifies only the dish name, the main protein and raw weight, and the number of meals covered.
+3. **Weekly Split Grocery List (`grocery_list.csv`):**
+   - Columns: `Run, Category, Item, Quantity_g, Estimated_Price_EUR`
+   - Grouped into floating shopping runs (every 3–4 days to respect shelf-life limits, e.g. Saturday Run, Wednesday Run, or dated runs like `2026-10-13 Run`).
+   - Automatically post-processed and sorted by `[Run, Category]` upon writing.
 
-3. Module 2: Macro & Caloric Calculation Engine
-The agent must dynamically calculate daily and weekly nutritional targets based on variable inputs rather than static numbers:
+---
 
-Dynamic Inputs: Current bodyweight (e.g., 65 kg), goal state (e.g., lean bulk), and user-defined multipliers (e.g., 2.3g Protein/kg, 1g+ Fat/kg, remaining calories to Carbohydrates).
+## 5. Tool Suite: Pure I/O Primitives
+The agent interacts with the filesystem through exactly 7 pure I/O tools:
+1. `tool_save_memory_note(note: str, tier: str)`: Saves meaningful notes to `weekly` or `long_term` memory.
+2. `tool_get_meal_plan(target_date: Optional[str])`: Reads the active meal plan CSV (returns empty if file does not exist).
+3. `tool_update_meal_plan(meal_entries: list[dict])`: Writes or updates rows in the active meal plan CSV.
+4. `tool_get_grocery_list()`: Reads the active grocery list CSV.
+5. `tool_update_grocery_list(grocery_entries: list[dict], mode: str)`: Writes or updates rows in the active grocery list CSV and sorts by `[Run, Category]`.
+   - **User Confirmation Required:** The agent must always ask the user for confirmation before executing `tool_update_grocery_list`.
+6. `tool_get_batch_cook()`: Reads the active batch cook CSV.
+7. `tool_update_batch_cook(dishes: list[dict])`: Writes or updates rows in the active batch cook CSV.
 
-Flat Macro Adherence: Once targets are set (e.g., 155g P / 70g F / 330g C), the agent must build daily meal plans that keep carbohydrate and fat sources relatively flat across the week, swapping only the raw weights of protein sources (chicken, beef, pork, shrimp) to hit the daily goal.
+No tools perform algorithmic calculations, combinatorial recipe solving, or programmatic decision-making.
 
-4. Module 3: Plan Generation Engine (Meals & Groceries)
-The agent must generate actionable, highly structured outputs:
+---
 
-Raw Weight Precision: All meal plans must dictate raw/dry ingredient weights (e.g., "110g dry rice noodles", "200g raw lean beef") to ensure accurate macro tracking.
+## 6. Temporal Anchoring & Single Time Recording
+- Time is anchored to the user's local timezone (e.g. `Europe/Brussels`).
+- The current time is recorded **once** at session startup / agent initialization to prevent Google ADK from regenerating dynamic system instructions on every conversational turn.
+- System instructions are passed as a static string to the ADK `Agent`.
 
-Zero-Waste Algorithm: The agent must exhaust standard package sizes (e.g., splitting exactly a 1kg bag of frozen shrimp across four dinners) so no perishable food goes to waste.
+---
 
-Split Grocery Logistics: Grocery lists must automatically divide into a "Saturday Run" and a "Wednesday Run" to ensure fresh meat is never stored in the fridge longer than 48-72 hours.
-
-5. Module 4: Database, Tracking, & Analytics
-The agent must function as a database manager capable of reading, writing, and analyzing structured data (Text/CSV):
-
-Price Tracking: Log and monitor the unit prices of frequent purchases (e.g., Optimum Nutrition Whey price per kg, Colruyt Boni frozen avocado chunks, chicken breast).
-
-Artifact Generation: Output weekly CSVs of grocery costs, daily macros, and meal logs.
-
-Trend Reporting: Generate summaries upon request (e.g., "Show me my average weekly spend on protein sources over the last month," or "Graph my caloric adherence vs. grocery spend").
-
-6. Module 5: Dynamic Adaptation (Real-Time Inputs)
-The agent must be able to pivot the schedule based on real-world friction and user feedback:
-
-Meal Deviations: If the user inputs, "I was too tired to cook Thursday night and drank a double shake instead," the agent must instantly adjust Friday's macros and roll over the unused beef/shrimp to the weekend to prevent spoilage.
-
-Grocery Adjustments: If a targeted ingredient is out of stock or overpriced (e.g., "Pork shoulder was €15/kg today so I bought extra chicken"), the agent must recalculate the upcoming lunches and update the financial tracker.
-
-Preference Shifts: Seamlessly integrate new baseline rules (e.g., "I'm cutting to 63kg now, drop the carbs to 250g") and instantly regenerate the current week's remaining meals and the next grocery list.
+## 7. Interfaces & Setup
+- **Global Command (`meals`):** Launches the Google ADK Web Playground (`meals`) or terminal CLI (`meals --cli`).
+- **Clean Setup (`meals --setup`):** Prompts for Gemini API key with a direct prompt (`Enter Gemini API key: `) without unsolicited suggestions or masked placeholders.
