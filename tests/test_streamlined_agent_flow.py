@@ -162,6 +162,31 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("tool_update_grocery_list", prompt)
         self.assertIn("sorted by [Run, Category]", prompt)
 
+    def test_grocery_list_summary_only_and_run_filter(self):
+        get_grocery_fn = self.tools["tool_get_grocery_list"]
+        # 1. Full table (default)
+        full_res = get_grocery_fn()
+        self.assertIn("| Run | Category | Item |", full_res)
+        self.assertIn("Chicken Breast", full_res)
+        self.assertIn("Broccoli", full_res)
+
+        # 2. summary_only=True returns 1-line compact summary saving tokens
+        summary_res = get_grocery_fn(summary_only=True)
+        self.assertNotIn("|---|", summary_res)
+        self.assertIn("Grocery list exists (2 items across 1 run(s): Saturday Run)", summary_res)
+
+        # 3. run_name filter
+        filtered_res = get_grocery_fn(run_name="Saturday Run")
+        self.assertIn("Chicken Breast", filtered_res)
+        not_found_res = get_grocery_fn(run_name="Wednesday Run")
+        self.assertIn("No items found for run 'Wednesday Run'", not_found_res)
+
+    def test_prompt_instructs_no_redundant_reads_or_meal_plan_validator_for_groceries(self):
+        prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
+        self.assertIn("Do NOT call tool_get_grocery_list or re-read", prompt)
+        self.assertIn("NEVER call tool_check_meal_plan when updating groceries", prompt)
+        self.assertIn("summary_only=True", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

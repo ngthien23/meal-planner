@@ -53,9 +53,9 @@ The agent interacts with the filesystem through exactly 8 tools:
 1. `tool_save_memory_note(note: str, tier: str)`: Saves meaningful notes to `weekly` or `long_term` memory.
 2. `tool_get_meal_plan(target_date: Optional[str])`: Reads the active meal plan CSV (returns empty if file does not exist).
 3. `tool_update_meal_plan(meal_entries: list[dict])`: Writes or updates rows in the active meal plan CSV.
-4. `tool_check_meal_plan(target_calories: Optional[float], target_p: Optional[float], target_c: Optional[float], target_f: Optional[float])`: Verifies that the weekly meal plan sums approximate the target weekly calories and P/C/F goals (including carried deficits to eat or surpluses to cut from last week recorded in memory). Requests the agent to fix if discrepancies are found (`[NEEDS FIXING]`), and accepts if everything checks out (`[ACCEPTED]`).
-5. `tool_get_grocery_list()`: Reads the active grocery list CSV.
-6. `tool_update_grocery_list(grocery_entries: list[dict], mode: str)`: Writes or updates rows in the active grocery list CSV and sorts by `[Run, Category]`.
+4. `tool_check_meal_plan(target_calories: Optional[float], target_p: Optional[float], target_c: Optional[float], target_f: Optional[float])`: Verifies that the weekly meal plan sums approximate the target weekly calories and P/C/F goals (including carried deficits to eat or surpluses to cut from last week recorded in memory). Requests the agent to fix if discrepancies are found (`[NEEDS FIXING]`), and accepts if everything checks out (`[ACCEPTED]`). Strictly used for meal plan verification; never invoked for grocery list or batch cook operations.
+5. `tool_get_grocery_list(run_name: Optional[str], summary_only: bool)`: Reads the active grocery list CSV. Supports `summary_only=True` to return a compact 1-line existence and run summary to conserve tokens, and `run_name` to filter by shopping run.
+6. `tool_update_grocery_list(grocery_entries: list[dict], mode: str)`: Writes or updates rows in the active grocery list CSV and sorts by `[Run, Category]`. Does not require subsequent re-reading or meal plan validation.
 7. `tool_get_batch_cook()`: Reads the active batch cook CSV.
 8. `tool_update_batch_cook(dishes: list[dict])`: Writes or updates rows in the active batch cook CSV.
 

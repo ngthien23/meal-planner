@@ -13,6 +13,7 @@ from meal_planner.tools.artifacts import (
     update_batch_cook_csv,
     check_meal_plan_csv,
     get_current_cycle_prefix,
+    _run_sort_key,
 )
 
 _RECORDED_CURRENT_TIME: Optional[datetime] = None
@@ -99,6 +100,10 @@ COMMUNICATION POLICY:
 3. MEMORY RETENTION: Use tool_save_memory_note(note, tier='weekly') for dated on-hand stock, meal deviations, or carried deficits. Use tier='long_term' for profile stats and lasting preferences. Do not record conversational chatter.
 4. NO RIGID LOCAL NUTRITION OR PRICE BOOKKEEPING: Do not maintain local tracking tables for prices or nutrition facts; rely on reasoning and search.
 5. MACRONUTRIENT NOTATION (NO GRAMS FOR P/C/F): Always express macronutrients by attaching the letter directly to the number (e.g. 40P, 50C, 15F). Never write grams or 'g' for protein, carbs, or fat. Food portion weights use standard units (g, kg), and energy uses kcal.
+6. TOOL CALLING EFFICIENCY (NO REDUNDANT READS OR CHECKS):
+   - When an update tool succeeds (e.g. tool_update_grocery_list), the artifact is already updated. Do NOT call tool_get_grocery_list or re-read the file unless the user explicitly requested to view it.
+   - If you only need to check if a grocery list exists or view run names, call tool_get_grocery_list(summary_only=True) to save tokens.
+   - tool_check_meal_plan is EXCLUSIVELY for validating weekly meal plans (meal_plan.csv). NEVER call tool_check_meal_plan when updating groceries or batch cooking.
 
 MULTIMODAL PHOTO HANDLING:
 1. GROCERY BILLS / RECEIPT PHOTOS:
@@ -126,14 +131,16 @@ PLANNING PRINCIPLES:
    - Exhaust on-hand protein across consecutive meals until depleted before introducing new cuts.
 4. DYNAMIC GROCERY CADENCE:
    - Restock perishable groceries at dynamic intervals based on shelf life, shifting the next shopping run to the date on-hand stock is exhausted.
-   - Read the current list via tool_get_grocery_list before determining changes.
+   - Read the current list via tool_get_grocery_list before determining changes (use summary_only=True if only checking existence).
    - Update the grocery list directly via tool_update_grocery_list; the list is automatically sorted by [Run, Category] upon writing.
+   - Do NOT re-read the grocery list after updating it. NEVER call tool_check_meal_plan for grocery updates.
 5. RETROSPECTIVE DEVIATIONS:
    - If a meal is skipped or eaten out, record a dated note in Short-Term Memory via tool_save_memory_note(note, tier='weekly'). Eating out does not deduct home inventory. Distribute missed calories or protein across remaining days within comfortable limits.
 6. BATCH COOK PLANNING:
    - Persist batch dishes to {active_batch_csv} using tool_update_batch_cook. Specify Dish (name only), Main_Protein (protein name and weight), and Meals (number of meals covered).
 7. PLAN VERIFICATION:
-   - Always run tool_check_meal_plan() after creating or modifying a meal plan. If it returns [NEEDS FIXING], adjust meals via tool_update_meal_plan until [ACCEPTED].
+   - Always run tool_check_meal_plan() after creating or modifying a meal plan (meal_plan.csv).
+   - NEVER call tool_check_meal_plan() for grocery list or batch cook updates; it is strictly a nutritional macro validator for weekly meal plans.
 """
 
 def get_agent_tools(data_dir: str = "data") -> list[Callable]:
@@ -183,11 +190,33 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         res = update_meal_plan_csv(data_dir, meal_entries)
         return res.get("message", "Meal plan updated.")
 
-    def tool_get_grocery_list() -> str:
-        """Reads the active split grocery list CSV."""
+    def tool_get_grocery_list(run_name: Optional[str] = None, summary_only: bool = False) -> str:
+        """Reads the active split grocery list CSV.
+        
+        Args:
+            run_name: Optional run name filter (e.g. 'Saturday Run' or '2026-10-13 Run') to view only items for that run.
+            summary_only: If True, returns only a compact 1-line existence and run summary instead of the full table, saving tokens.
+        """
         rows = get_grocery_list_csv(data_dir)
         if not rows:
             return "No grocery list found."
+
+        runs = []
+        for r in sorted(rows, key=lambda x: _run_sort_key(x.get("Run", ""))):
+            run_val = r.get("Run", "").strip()
+            if run_val and run_val not in runs:
+                runs.append(run_val)
+
+        if summary_only:
+            runs_str = ", ".join(runs) if runs else "None"
+            return f"Grocery list exists ({len(rows)} items across {len(runs)} run(s): {runs_str})."
+
+        if run_name:
+            filtered = [r for r in rows if run_name.lower() in str(r.get("Run", "")).lower()]
+            if not filtered:
+                return f"No items found for run '{run_name}'. Available runs: {', '.join(runs)}."
+            rows = filtered
+
         lines = ["| Run | Category | Item | Quantity (g) | Est. Price (€) |", "|---|---|---|---|---|"]
         for r in rows:
             qty_val = str(r.get("Quantity_g") or r.get("Quantity") or "0").rstrip("g").strip()
@@ -202,8 +231,9 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
     def tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str:
         """Updates or replaces the active grocery list CSV.
         
-        Use this tool to shift grocery runs dynamically to the date on-hand stock runs out (D_exhaust)
-        and prune redundant meats.
+        Use this tool to add, update, or prune grocery items. Calling this tool updates the CSV directly;
+        do NOT call tool_get_grocery_list afterwards unless the user specifically asks to see the list.
+        NEVER call tool_check_meal_plan after updating groceries.
         
         Args:
             grocery_entries: List of items [{'Run': '2026-10-13 Run', 'Category': 'meat', 'Item': 'Chicken Breast', 'Quantity_g': 1000, 'Estimated_Price_EUR': 9.50}]
@@ -243,9 +273,12 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
     ) -> str:
         """Checks the weekly meal plan sums against target calories and macros (P/C/F).
         
-        Verifies that weekly total planned calories and P/C/F approximate the nutritional
-        goals, including carried deficits or surpluses from last week recorded in memory.
+        Verifies that weekly total planned calories and P/C/F in meal_plan.csv approximate
+        the nutritional goals, including carried deficits or surpluses from last week.
         Returns [ACCEPTED] if approved, or [NEEDS FIXING] with discrepancies to fix.
+        
+        IMPORTANT: This tool is EXCLUSIVELY for meal plan (meal_plan.csv) validation.
+        NEVER call this tool when updating groceries or batch cooking.
         
         Args:
             target_calories: Optional explicit weekly calorie goal. If omitted, derived from memory.
