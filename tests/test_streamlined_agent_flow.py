@@ -39,13 +39,7 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         mem_ctx = MemoryManager(self.test_dir).get_context()
         self.assertTrue(any("Chicken Wings" in n and "500g" in n for n in mem_ctx["weekly"]))
 
-        # 2. Agent checks macro targets
-        get_macros_fn = self.tools["tool_get_macro_targets"]
-        macros_str = get_macros_fn(70.0, 2500.0, 2.2, 0.8)
-        self.assertIn("2500 kcal", macros_str)
-        self.assertIn("Rough Targets", macros_str)
-
-        # 3. Agent updates meal plan:
+        # 2. Agent updates meal plan:
         # Next meal (Saturday Lunch) -> Air Fried Chicken craving (250g wings, 250g thighs)
         # Saturday Dinner -> Chicken Soup (250g wings) to respect soft dinner texture
         # Sunday Lunch -> Remaining chicken (250g thighs)

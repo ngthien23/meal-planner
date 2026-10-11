@@ -7,9 +7,9 @@ class TestAgentTools(unittest.TestCase):
     def test_agent_tools_registered(self):
         tools = get_agent_tools()
         tool_names = [t.__name__ for t in tools]
-        self.assertEqual(len(tool_names), 8)
+        self.assertEqual(len(tool_names), 7)
         self.assertIn("tool_save_memory_note", tool_names)
-        self.assertIn("tool_get_macro_targets", tool_names)
+        self.assertNotIn("tool_get_macro_targets", tool_names)
         self.assertIn("tool_get_meal_plan", tool_names)
         self.assertIn("tool_update_meal_plan", tool_names)
         self.assertIn("tool_get_grocery_list", tool_names)
@@ -27,8 +27,9 @@ class TestAgentTools(unittest.TestCase):
     def test_system_instruction_contains_temporal_context(self):
         prompt = build_system_instruction("Europe/Brussels")
         self.assertIn("Europe/Brussels", prompt)
-        self.assertIn("soft, liquid, or broth-based", prompt)
+        self.assertIn("Local Time:", prompt)
         self.assertIn("raw/dry ingredient weights", prompt)
+        self.assertNotIn("Dietary Bans:", prompt)
 
     def test_tool_execution_flow(self):
         test_dir = "tests/test_agent_flow"
@@ -38,11 +39,6 @@ class TestAgentTools(unittest.TestCase):
             # 1. Save profile to long-term memory
             msg = tools_map["tool_save_memory_note"]("Bodyweight: 65.0 kg | Goal: lean_bulk | Target Calories: 2550 kcal", tier="long_term")
             self.assertIn("Saved to long-term memory", msg)
-            
-            # 2. Get macro guidelines
-            macros = tools_map["tool_get_macro_targets"](65.0, 2550.0, 2.2, 1.0)
-            self.assertIn("Rough Targets", macros)
-            self.assertIn("2550 kcal", macros)
 
             # 3. Update meal plan artifact
             update_res = tools_map["tool_update_meal_plan"]([

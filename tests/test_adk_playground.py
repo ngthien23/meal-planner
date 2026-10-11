@@ -19,9 +19,9 @@ class TestAdkPlayground(unittest.TestCase):
         self.assertEqual(root_agent.name, "meal_planner")
         self.assertEqual(root_agent.model, "gemini-3.8-flash")
         tool_names = [t.__name__ for t in root_agent.tools]
-        self.assertEqual(len(root_agent.tools), 8)
+        self.assertEqual(len(root_agent.tools), 7)
         self.assertIn("tool_save_memory_note", tool_names)
-        self.assertIn("tool_get_macro_targets", tool_names)
+        self.assertNotIn("tool_get_macro_targets", tool_names)
         self.assertIn("tool_get_meal_plan", tool_names)
         self.assertIn("tool_update_meal_plan", tool_names)
         self.assertIn("tool_get_grocery_list", tool_names)

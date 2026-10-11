@@ -84,27 +84,18 @@ def ensure_api_key(input_fn=None) -> str:
         os.environ["GOOGLE_API_KEY"] = key
         return key
 
-    print("\n[*] No GEMINI_API_KEY detected in environment or .env file.")
-    print("A Gemini API key is needed for live conversational AI and dynamic reasoning.")
     try:
-        entered = input_fn("Enter your Gemini API key (or press Enter to skip): ").strip()
+        entered = input_fn("Enter Gemini API key: ").strip()
     except (KeyboardInterrupt, EOFError):
         return ""
 
     if not entered:
-        print("Skipping API key setup. Running in local deterministic mode.")
         return ""
 
     os.environ["GEMINI_API_KEY"] = entered
     os.environ["GOOGLE_API_KEY"] = entered
-    try:
-        save = input_fn("Save this key to .env for future sessions? (y/N): ").strip().lower()
-        if save in ["y", "yes"]:
-            save_env_api_key(entered)
-            print("[OK] GEMINI_API_KEY and GOOGLE_API_KEY saved to .env file.")
-    except (KeyboardInterrupt, EOFError):
-        pass
-
+    save_env_api_key(entered)
+    print("[OK] Saved API key.")
     return entered
 
 def quick_setup_wizard(
@@ -119,19 +110,13 @@ def quick_setup_wizard(
 
     current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
     if not current_key or force:
-        if current_key and force:
-            masked = current_key[:4] + "..." + current_key[-4:] if len(current_key) > 8 else "***"
-            prompt_str = f"Enter Gemini API key (press Enter to keep current [{masked}]): "
-        else:
-            prompt_str = "Enter Gemini API key: "
-
         try:
-            entered_key = input_fn(prompt_str).strip()
+            entered_key = input_fn("Enter Gemini API key: ").strip()
             if entered_key:
                 save_env_api_key(entered_key)
+                os.environ["GEMINI_API_KEY"] = entered_key
+                os.environ["GOOGLE_API_KEY"] = entered_key
                 print("[OK] Saved API key.")
-            elif not current_key:
-                print("No API key entered. You can set it later by running: meals --setup")
         except (KeyboardInterrupt, EOFError):
             pass
 
@@ -152,6 +137,7 @@ def run_interactive_cli(data_dir: str = "data") -> None:
         pass
 
     tools = get_agent_tools(data_dir)
+    tools_map = {t.__name__: t for t in tools}
 
     # 1. Blank-slate memory hydration
     print("\n[*] Hydrating relevant context files from blank slate...")
@@ -204,13 +190,13 @@ def run_interactive_cli(data_dir: str = "data") -> None:
 
             # Local shortcut commands
             if user_input == "/plan":
-                print(tools_map["tool_generate_meal_plan"]())
+                print(tools_map["tool_get_meal_plan"]())
                 continue
             elif user_input == "/groceries":
-                print(tools_map["tool_view_grocery_list"]())
+                print(tools_map["tool_get_grocery_list"]())
                 continue
-            elif user_input == "/analytics":
-                print(tools_map["tool_get_analytics"]())
+            elif user_input == "/batch":
+                print(tools_map["tool_get_batch_cook"]())
                 continue
             elif user_input == "/memory":
                 ctx = mem_mgr.get_context()
@@ -247,22 +233,13 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                     active_plan = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
                     print(f"\nAgent > Your weekly meal plan is stored at: {active_plan}\n(Ask me explicitly to 'print the plan' if you wish to see all rows in chat).\n")
                 elif "print the plan" in lower or "show the plan" in lower:
-                    print(f"\nAgent > {tools_map['tool_generate_meal_plan']()}\n")
-                elif "shake" in lower or "missed" in lower or "skip" in lower:
-                    res = tools_map["tool_report_meal_deviation"](
-                        "Thursday", "dinner", "Double Whey Shake", 50.0, 300.0
-                    )
-                    print(f"\nAgent > {res}\n")
-                elif "substitute" in lower or "bought extra chicken" in lower or "pork" in lower:
-                    res = tools_map["tool_substitute_ingredient"]("pork_shoulder", "chicken_breast", 9.50)
-                    print(f"\nAgent > {res}\n")
-                elif "price" in lower:
-                    res = tools_map["tool_log_price_update"]("chicken_breast", 9.50)
-                    print(f"\nAgent > {res}\n")
-                elif "analytic" in lower or "spend" in lower:
-                    print(f"\nAgent > {tools_map['tool_get_analytics']()}\n")
+                    print(f"\nAgent > {tools_map['tool_get_meal_plan']()}\n")
+                elif "groceries" in lower or "grocery" in lower:
+                    print(f"\nAgent > {tools_map['tool_get_grocery_list']()}\n")
+                elif "batch" in lower:
+                    print(f"\nAgent > {tools_map['tool_get_batch_cook']()}\n")
                 else:
-                    print("\nAgent > I received your input. Set GEMINI_API_KEY to enable full live LLM reasoning for any natural language input.\n")
+                    print("\nAgent > Command received. Set GEMINI_API_KEY to enable full live LLM reasoning for any natural language input.\n")
 
         except (KeyboardInterrupt, EOFError):
             print("\nSession ended.")
@@ -281,8 +258,10 @@ def serve_adk_playground(
 
     data_dir = resolve_data_dir(data_dir)
 
-    # 1. API key verification
-    ensure_api_key()
+    # 1. API key verification (only if missing)
+    current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    if not current_key:
+        ensure_api_key()
 
     user_tz = "Europe/Brussels"
     try:

@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from meal_planner.tools.onboarding import load_user_profile, resolve_timezone
-from meal_planner.tools.meal_generator import get_current_cycle_prefix, ensure_weekly_plan_artifacts
+from meal_planner.tools.meal_generator import get_current_cycle_prefix
 
 __all__ = [
     "get_meal_plan_csv",
@@ -65,12 +65,6 @@ def get_meal_plan_csv(
         List of row dicts: [{'Date': ..., 'Meal': ..., 'Recipe': ..., 'Ingredient': ..., 'P': ..., 'C': ..., 'F': ..., 'Calories': ...}]
     """
     path = _resolve_plan_path(data_dir, "meal_plan.csv", prefix=prefix)
-    if not os.path.exists(path):
-        profile = load_user_profile(data_dir)
-        if profile and profile.is_onboarded and profile.target_calories > 0:
-            ensure_weekly_plan_artifacts(profile, data_dir)
-            path = _resolve_plan_path(data_dir, "meal_plan.csv", prefix=prefix)
-
     if not os.path.exists(path):
         return []
 

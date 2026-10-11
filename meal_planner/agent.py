@@ -3,7 +3,6 @@ import os
 from typing import Callable, Optional
 
 from meal_planner.tools.onboarding import resolve_timezone
-from meal_planner.tools.macro_calculator import calculate_daily_targets
 from meal_planner.tools.memory import MemoryManager
 from meal_planner.tools.meal_generator import get_current_cycle_prefix
 from meal_planner.tools.artifacts import (
@@ -15,10 +14,30 @@ from meal_planner.tools.artifacts import (
     update_batch_cook_csv,
 )
 
-def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: str = "data") -> str:
+_RECORDED_CURRENT_TIME: Optional[datetime] = None
+
+def get_recorded_time(tz=None) -> datetime:
+    """Returns the recorded current time, capturing it once for the session."""
+    global _RECORDED_CURRENT_TIME
+    if _RECORDED_CURRENT_TIME is None:
+        if tz is None:
+            tz = resolve_timezone("Europe/Brussels")
+        _RECORDED_CURRENT_TIME = datetime.now(tz)
+    return _RECORDED_CURRENT_TIME
+
+def reset_recorded_time() -> None:
+    """Resets the recorded session time (e.g. for testing)."""
+    global _RECORDED_CURRENT_TIME
+    _RECORDED_CURRENT_TIME = None
+
+def build_system_instruction(
+    user_timezone: str = "Europe/Brussels",
+    data_dir: str = "data",
+    reference_dt: Optional[datetime] = None
+) -> str:
     """Builds the system instruction prompt for the Gemini meal planner agent."""
     tz = resolve_timezone(user_timezone)
-    now_local = datetime.now(tz)
+    now_local = reference_dt if reference_dt is not None else get_recorded_time(tz)
     now_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z")
     weekday_str = now_local.strftime("%A")
 
@@ -56,16 +75,16 @@ def build_system_instruction(user_timezone: str = "Europe/Brussels", data_dir: s
      - Current bodyweight in kg
      - Fitness goal (maintenance, lean_bulk, or cut)
      - Target daily calories (or let you calculate based on bodyweight and goal)
-     - Preferred protein intake (~2.2g per kg bodyweight)
+     - Preferred protein intake (e.g. grams per day or per kg)
      - Weekly budget for protein (e.g. €40, €50/week)
-     - Qualitative eating preferences (favorite dishes, broth vs solid textures, preferred ingredients like jasmine rice or noodles)
-     - Preferred timezone and currency (default: {user_timezone}, EUR)
+     - Qualitative eating preferences (favorite dishes, cuisines, textures, dietary choices)
+     - Preferred timezone and currency ({user_timezone}, EUR)
   3. Once the user replies with their preferences:
      - Call `tool_save_memory_note(note, tier='long_term')` to record each of their profile stats, macro guidelines, protein budget, and qualitative eating preferences into Long-Term Memory.
      - Design their initial 7-day meal plan and grocery list, and write them directly to the artifacts via `tool_update_meal_plan(...)` and `tool_update_grocery_list(...)`.
      - Point the user to the newly generated plan file: {active_plan_csv}."""
 
-    return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant for a powerlifting athlete.
+    return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant.
 
 CURRENT TEMPORAL & ARTIFACT CONTEXT:
 - Local Time: {now_str} ({weekday_str})
@@ -121,24 +140,24 @@ MULTIMODAL PHOTO HANDLING (BILLS & MEALS):
        * Update `{active_plan_csv}` with `tool_update_meal_plan` if upcoming meals need adjustment.
      - Confirm that macros were rebalanced and state any leftover protein cuts rolled over.
 
-CORE ATHLETE RULES & PLANNING PRINCIPLES:
+CORE PLANNING PRINCIPLES & WORKFLOW:
 1. YOU ARE THE PLANNER & CHEF (TRAIN OF THOUGHT & REASONING):
    When constructing or adapting a meal plan, base everything around protein stock and nutritional needs:
    - Step 1: Consider the Budget
-     * Base grocery planning around the athlete's weekly budget for protein recorded in Long-Term Memory (e.g. €40–€50/week).
+     * Base grocery planning around the user's weekly budget for protein recorded in Long-Term Memory (e.g. €40–€50/week).
      * Estimate ingredient costs using your own reasoning and web-browsing capability (no local price database required).
-     * Balance cost-effective high-protein staples (eggs, canned tuna, chicken thighs, whey powder) with more premium cuts to fit within the weekly protein budget.
+     * Balance cost-effective high-protein staples (eggs, canned tuna, chicken, whey powder) with more premium cuts to fit within the weekly protein budget.
    - Step 2: Allocate the Budget by Roughly Balancing Needs and Preferences
-     * Allocate the budget toward core protein essentials first (chicken thighs/breast, eggs, canned tuna, whey powder).
-     * Balance with cultural and qualitative eating preferences stored in Long-Term Memory (e.g. Vietnamese dishes, phở, bún, comforting broth-based soups for dinner, Thai jasmine rice).
-     * Keep macros as rough targets rather than rigid decimal perfection: even portioning of protein stock takes priority. Top up any small protein deficits with 1–2 scoops of whey powder.
+     * Allocate the budget toward core protein essentials first (chicken, eggs, fish, meat, tofu, whey powder).
+     * Balance with personal and qualitative eating preferences stored in Long-Term Memory (e.g. favorite dishes, cuisines, textures, dietary choices).
+     * Keep macros as rough targets rather than rigid decimal perfection: even portioning of protein stock takes priority. Top up any small protein deficits with protein powder (e.g. whey).
    - Step 3: Be Aware of Nuances Relating to Nutrition Facts
      * Raw vs. cooked weight yields: meat loses ~20–30% weight when cooked; dry rice/pasta expands 2–3x when cooked. Recipes and grocery lists always specify raw/dry weights.
      * Bone-in and skin-on vs. boneless and skinless cuts: account for bone weight discount (e.g. chicken thigh quarters have ~25–30% inedible bone) and higher fat calories from skin.
      * Trimmings and edible portion fractions: ensure net edible protein satisfies daily athlete targets.
      * You do NOT need a rigid nutrition facts database; your internal nutritional knowledge and web search are fully sufficient.
-   - Qualitative eating preferences (e.g. Vietnamese dishes, phở, bún, Thai jasmine rice, favorite foods, broth vs solid textures) are stored as natural text in Long-Term Memory (see ATHLETE MEMORY above), NOT hardcoded into JSON schemas. Follow and adapt to these natural memory notes when designing meals.
-   - When the athlete shares new eating habits or lasting preferences, save them to long-term memory via `tool_save_memory_note(note, tier='long_term')`.
+   - Qualitative eating preferences (e.g. favorite dishes, cuisines, textures, dietary choices) are stored as natural text in Long-Term Memory (see ATHLETE MEMORY above), NOT hardcoded into JSON schemas. Follow and adapt to these natural memory notes when designing meals.
+   - When the user shares new eating habits or lasting preferences, save them to long-term memory via `tool_save_memory_note(note, tier='long_term')`.
    - You work directly with artifacts: read and update `{active_plan_csv}` with `tool_update_meal_plan` and `{active_grocery_csv}` with `tool_update_grocery_list`.
    - STOCK TRACKING VS. GROCERY LIST SCOPE:
      * On-Hand Stock Tracking in Short-Term Memory (`weekly.md`) tracks PROTEIN ONLY (chicken, beef, pork, fish, shrimp, eggs, canned tuna, whey powder, tofu, etc.) with dates. Do NOT track produce, carbs, oils, or pantry items in fridge stock tracking.
@@ -146,14 +165,13 @@ CORE ATHLETE RULES & PLANNING PRINCIPLES:
 2. ROUGH MACROS & EVEN STOCK PORTIONING:
    - Daily macronutrients are rough guidelines, NOT rigid decimal constraints!
    - When portioning on-hand meat or scheduled cuts, prioritize even, natural portioning (e.g. four 250g portions of 1000g chicken) over micro-optimizing decimal numbers.
-   - If protein intake for a day ends up slightly below target, comfortably top it up with 1–2 scoops of ON Whey powder (30–60g whey, ~24–48g protein) as a shake or snack.
+   - If protein intake for a day ends up slightly below target, comfortably top it up with protein powder (e.g. whey powder) as a shake or snack.
 3. PROTEIN-FIRST DECISIONS & NEXT-MEAL CRAVINGS:
    - Meals are decided based on available protein.
    - When the user reports a craving (e.g. "craving air fried chicken"), the craving replaces the very next core meal relative to current local time.
    - Record on-hand stock with date in Short-Term Memory (`tool_save_memory_note`, tier='weekly') if user reports available meat.
 4. CONSECUTIVE STOCK EXHAUSTION (LUNCH & DINNER):
    - Always exhaust on-hand protein across consecutive upcoming meals (both lunch and dinner) until stock is depleted (0g).
-   - Texture rules: Breakfast & Dinner strictly soft, liquid, or broth-based (smoothies, chicken soup / broth) to respect the athlete's digestion; Lunch is solid batch / air-fried cuts.
 5. DYNAMIC FLOATING GROCERY CADENCE & GROCERY LIST UPDATES:
    - Groceries are restocked every 3–4 days (shelf-life limit), not dead-locked onto fixed days.
    - When the user has on-hand stock, calculate the date when that stock runs out (D_exhaust).
@@ -177,8 +195,7 @@ CORE ATHLETE RULES & PLANNING PRINCIPLES:
        2. `Main_Protein`: What is the main protein and how much in grams or kg (e.g. "1000g Pork Belly", "1kg Chicken Thighs"). This is the ONLY ingredient to list.
        3. `Meals`: How many meals this batch covers (e.g. 3).
      * Ditch legacy columns: do not include grocery run dates, prep days, or non-protein ingredients in the batch cook artifact.
-8. Dietary Bans: Fortified soy milk only (no dairy), ON Whey only, canned tuna only.
-9. Raw Weights: All recipes dictate raw/dry ingredient weights.
+8. Raw Weights: All recipes dictate raw/dry ingredient weights.
 """
 
 def get_agent_tools(data_dir: str = "data") -> list[Callable]:
@@ -198,35 +215,6 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             return f"Saved to {tier_label} memory: '{note}'."
         else:
             return f"Memory note ignored: {res.get('reason', 'trivial or duplicate')}."
-
-    def tool_get_macro_targets(
-        bodyweight_kg: float,
-        target_calories: float,
-        protein_multiplier: float = 2.2,
-        fat_multiplier: float = 1.0
-    ) -> str:
-        """Returns rough daily calorie and macronutrient guidelines given bodyweight and calorie target.
-        
-        Note: These are rough reference guidelines, not rigid decimal constraints!
-        Small deviations to make even portions of available meat are preferred.
-        Protein goals can also be topped up with 1-2 scoops of whey powder (30-60g).
-        """
-        targets = calculate_daily_targets(
-            bodyweight_kg,
-            protein_multiplier,
-            fat_multiplier,
-            target_calories
-        )
-        return (
-            f"Daily Macro Reference Guidelines (Rough Targets):\n"
-            f"- Bodyweight: {bodyweight_kg:.1f} kg\n"
-            f"- Daily Calories: ~{targets.calories:.0f} kcal\n"
-            f"- Protein: ~{targets.protein_g:.0f}g ({protein_multiplier:.1f}g/kg)\n"
-            f"- Carbs: ~{targets.carbs_g:.0f}g\n"
-            f"- Fat: ~{targets.fat_g:.0f}g ({fat_multiplier:.1f}g/kg)\n"
-            f"* Tip: Natural, even meat portions are preferred over exact decimals. "
-            f"If protein is slightly low, recommend topping up with 1 scoop (30g) of ON whey."
-        )
 
     def tool_get_meal_plan(target_date: Optional[str] = None) -> str:
         """Reads the active weekly meal plan CSV.
@@ -311,7 +299,6 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
 
     return [
         tool_save_memory_note,
-        tool_get_macro_targets,
         tool_get_meal_plan,
         tool_update_meal_plan,
         tool_get_grocery_list,
@@ -330,15 +317,13 @@ def get_root_agent(data_dir: str = "data"):
     model_name = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
     user_tz = "Europe/Brussels"
     tools = get_agent_tools(data_dir)
-
-    def dynamic_instruction(ctx=None) -> str:
-        return build_system_instruction(user_tz, data_dir=data_dir)
+    sys_instruction = build_system_instruction(user_tz, data_dir=data_dir)
 
     return Agent(
         name="meal_planner",
         model=model_name,
-        description="AI Meal & Grocery Planner Agent with multimodal receipt and meal analysis for powerlifting athlete.",
-        instruction=dynamic_instruction,
+        description="AI Meal & Grocery Planner Agent with multimodal receipt and meal analysis.",
+        instruction=sys_instruction,
         tools=tools,
     )
 
