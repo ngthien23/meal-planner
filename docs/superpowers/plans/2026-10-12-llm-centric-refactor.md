@@ -35,17 +35,17 @@
 - Modify: `meal_planner/tools/onboarding.py`
 - Test: `tests/test_artifact_tools.py`
 
-- [ ] **Step 1: Move `get_current_cycle_prefix` into `meal_planner/tools/artifacts.py`**
+- [x] **Step 1: Move `get_current_cycle_prefix` into `meal_planner/tools/artifacts.py`**
   - Implement `get_current_cycle_prefix(user_timezone: str = "Europe/Brussels", reference_dt: Optional[datetime] = None, week_start_day: str = "Saturday") -> str` inside `artifacts.py`.
   - Remove imports from `meal_planner.tools.meal_generator` and `meal_planner.tools.onboarding.load_user_profile`.
-- [ ] **Step 2: Streamline `meal_planner/models.py` and `meal_planner/tools/onboarding.py`**
+- [x] **Step 2: Streamline `meal_planner/models.py` and `meal_planner/tools/onboarding.py`**
   - In `models.py`, retain `CURRENCY_SYMBOLS` and `get_currency_symbol`. Remove legacy `Ingredient`, `Recipe`, `InventoryItem`, `InventoryState`, `UserProfile`.
   - In `onboarding.py`, retain `resolve_timezone`. Remove `load_user_profile`, `init_user_profile`, `get_relative_datetime`.
-- [ ] **Step 3: Update `meal_planner/agent.py` and `meal_planner/cli.py` imports**
+- [x] **Step 3: Update `meal_planner/agent.py` and `meal_planner/cli.py` imports**
   - Import `get_current_cycle_prefix` directly from `meal_planner.tools.artifacts`.
-- [ ] **Step 4: Verify core unit tests pass**
+- [x] **Step 4: Verify core unit tests pass**
   - Run `python -m unittest tests/test_artifact_tools.py tests/test_agent_tools.py`.
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes**
   - `git add meal_planner/ tests/; git commit -m "refactor: decouple artifacts and prune legacy model definitions"`
 
 ---
@@ -62,14 +62,14 @@
 - Delete: `meal_planner/catalog/ingredients.json`
 - Delete: `meal_planner/catalog/recipes.json`
 
-- [ ] **Step 1: Remove legacy rule-based modules from `meal_planner/tools/`**
+- [x] **Step 1: Remove legacy rule-based modules from `meal_planner/tools/`**
   - Remove `inventory.py`, `adaptation.py`, `grocery_planner.py`, `macro_calculator.py`, `meal_generator.py`, `tracker.py`.
-- [ ] **Step 2: Remove catalog files**
+- [x] **Step 2: Remove catalog files**
   - Remove `meal_planner/catalog/ingredients.json` and `recipes.json`.
-- [ ] **Step 3: Check codebase for any lingering imports**
+- [x] **Step 3: Check codebase for any lingering imports**
   - Run `git grep "meal_generator"` and `git grep "inventory"` in `meal_planner/`.
   - Verify `meal_planner/` is completely clean of legacy solver references.
-- [ ] **Step 4: Commit deletion**
+- [x] **Step 4: Commit deletion**
   - `git rm meal_planner/tools/inventory.py meal_planner/tools/adaptation.py meal_planner/tools/grocery_planner.py meal_planner/tools/macro_calculator.py meal_planner/tools/meal_generator.py meal_planner/tools/tracker.py meal_planner/catalog/ingredients.json meal_planner/catalog/recipes.json; git commit -m "refactor: delete legacy rule-based solvers and catalog files"`
 
 ---
@@ -82,15 +82,15 @@
 - Modify: `tests/test_artifact_tools.py` (remove legacy `init_user_profile` fixture).
 - Modify: `tests/test_conversational_onboarding.py` (verify clean onboarding).
 
-- [ ] **Step 1: Update test fixtures in `tests/test_artifact_tools.py` and `tests/test_streamlined_agent_flow.py`**
+- [x] **Step 1: Update test fixtures in `tests/test_artifact_tools.py` and `tests/test_streamlined_agent_flow.py`**
   - Replace `init_user_profile` with direct memory/artifact setup.
-- [ ] **Step 2: Delete obsolete legacy test files**
+- [x] **Step 2: Delete obsolete legacy test files**
   - Remove tests that tested deleted rule-based functions.
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
   - Run `python -m unittest discover -s tests -p "test_*.py" -v`.
-- [ ] **Step 4: Verify 100% green test suite**
+- [x] **Step 4: Verify 100% green test suite**
   - Confirm all remaining tests pass.
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes**
   - `git commit -m "test: prune legacy solver tests and align test suite with LLM-centric architecture"`
 
 ---
@@ -103,8 +103,8 @@
 - Verify: `README.md`
 - Verify: `meal-planner-requirements.md`
 
-- [ ] **Step 1: Verify CLI runner and setup**
+- [x] **Step 1: Verify CLI runner and setup**
   - Run `python main.py --help`.
   - Run `python -m unittest discover -s tests -p "test_*.py"`.
-- [ ] **Step 2: Verify git status is clean and push to remote**
+- [x] **Step 2: Verify git status is clean and push to remote**
   - `git push origin main`.
