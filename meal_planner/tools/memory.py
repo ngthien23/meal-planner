@@ -131,7 +131,7 @@ class MemoryManager:
 
     def hydrate(self, user_timezone: str = "Europe/Brussels") -> tuple[list[tuple[str, str, float]], float]:
         """Loads only relevant context files (preferences, current week meal plan, memory) from disk, benchmarking latency."""
-        from meal_planner.tools.meal_generator import get_current_cycle_prefix
+        from meal_planner.tools.artifacts import get_current_cycle_prefix
         prefix = get_current_cycle_prefix(user_timezone)
         current_plan_csv = os.path.join(self.data_dir, "plans", f"{prefix}_meal_plan.csv")
         if not os.path.exists(current_plan_csv):

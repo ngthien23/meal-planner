@@ -4,7 +4,6 @@ from typing import Callable, Optional
 
 from meal_planner.tools.onboarding import resolve_timezone
 from meal_planner.tools.memory import MemoryManager
-from meal_planner.tools.meal_generator import get_current_cycle_prefix
 from meal_planner.tools.artifacts import (
     get_meal_plan_csv,
     update_meal_plan_csv,
@@ -13,6 +12,7 @@ from meal_planner.tools.artifacts import (
     get_batch_cook_csv,
     update_batch_cook_csv,
     check_meal_plan_csv,
+    get_current_cycle_prefix,
 )
 
 _RECORDED_CURRENT_TIME: Optional[datetime] = None

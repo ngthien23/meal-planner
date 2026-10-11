@@ -2,8 +2,6 @@ import unittest
 import os
 import shutil
 import tempfile
-from meal_planner.tools.onboarding import init_user_profile
-from meal_planner.tools.meal_generator import ensure_weekly_plan_artifacts
 from meal_planner.tools.artifacts import (
     get_meal_plan_csv,
     update_meal_plan_csv,
@@ -16,13 +14,15 @@ from meal_planner.tools.artifacts import (
 class TestArtifactTools(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
-        self.profile = init_user_profile(self.test_dir, {
-            "timezone": "Europe/Brussels",
-            "bodyweight_kg": 70.0,
-            "target_calories": 2500.0,
-            "is_onboarded": True
-        })
-        ensure_weekly_plan_artifacts(self.profile, self.test_dir)
+        update_meal_plan_csv(self.test_dir, [
+            {"Date": "2026-10-10", "Meal": "Breakfast", "Recipe": "Oatmeal", "Ingredient": "100g Oats", "P": 15, "C": 60, "F": 10, "Calories": 390},
+            {"Date": "2026-10-10", "Meal": "Lunch", "Recipe": "Chicken Rice", "Ingredient": "200g Chicken; 150g Rice", "P": 50, "C": 45, "F": 15, "Calories": 515},
+            {"Date": "2026-10-10", "Meal": "Dinner", "Recipe": "Beef Stew", "Ingredient": "200g Beef", "P": 45, "C": 20, "F": 20, "Calories": 440},
+        ])
+        update_grocery_list_csv(self.test_dir, [
+            {"Run": "Saturday Run", "Category": "meat", "Item": "Chicken Breast", "Quantity_g": 1000, "Estimated_Price_EUR": 9.50},
+            {"Run": "Saturday Run", "Category": "produce", "Item": "Broccoli", "Quantity_g": 500, "Estimated_Price_EUR": 2.00},
+        ])
 
     def tearDown(self):
         shutil.rmtree(self.test_dir)

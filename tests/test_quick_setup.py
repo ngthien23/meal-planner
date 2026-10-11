@@ -4,8 +4,7 @@ import shutil
 import tempfile
 from unittest.mock import patch, MagicMock
 
-from meal_planner.models import UserProfile, CURRENCY_SYMBOLS, get_currency_symbol
-from meal_planner.tools.onboarding import init_user_profile, load_user_profile
+from meal_planner.models import CURRENCY_SYMBOLS, get_currency_symbol
 from meal_planner.cli import quick_setup_wizard, run_meals_shortcut
 
 
@@ -22,30 +21,12 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self.orig_env)
 
-    def test_default_preferences_are_empty(self):
-        """Default UserProfile should have empty restrictions list for clean new user onboarding."""
-        profile = UserProfile()
-        self.assertEqual(profile.restrictions, [])
-        self.assertEqual(profile.currency, "EUR")
+    def test_currency_symbols(self):
+        """Verifies currency symbol resolution."""
         self.assertEqual(get_currency_symbol("EUR"), "€")
         self.assertEqual(get_currency_symbol("USD"), "$")
         self.assertEqual(get_currency_symbol("GBP"), "£")
         self.assertEqual(get_currency_symbol("VND"), "₫")
-
-    def test_init_user_profile_default_empty_restrictions(self):
-        """init_user_profile should persist empty restrictions and currency if not explicitly set."""
-        profile = init_user_profile(self.test_dir, {
-            "timezone": "UTC",
-            "bodyweight_kg": 70.0,
-            "currency": "USD"
-        })
-        self.assertEqual(profile.restrictions, [])
-        self.assertEqual(profile.currency, "USD")
-
-        loaded = load_user_profile(self.test_dir)
-        self.assertIsNotNone(loaded)
-        self.assertEqual(loaded.restrictions, [])
-        self.assertEqual(loaded.currency, "USD")
 
     def test_quick_setup_wizard_interactive_defaults(self):
         """Quick setup wizard should prompt for API key and save to .env without creating profile.json."""
@@ -77,7 +58,6 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
     def test_run_meals_shortcut_launches_adk_and_browser(self, mock_browser, mock_subproc):
         """meals shortcut should launch browser and start ADK server."""
         os.environ["GEMINI_API_KEY"] = "fake_test_key"
-        init_user_profile(self.test_dir, {"timezone": "UTC", "currency": "EUR"})
 
         with patch("meal_planner.cli._open_browser_delayed") as mock_open_delayed:
             run_meals_shortcut(args=["--port=8085", "--host=127.0.0.1", self.test_dir])
@@ -88,7 +68,6 @@ class TestQuickSetupAndShortcut(unittest.TestCase):
     def test_run_meals_shortcut_no_browser_flag(self, mock_subproc):
         """--no-browser flag should prevent launching the browser."""
         os.environ["GEMINI_API_KEY"] = "fake_test_key"
-        init_user_profile(self.test_dir, {"timezone": "UTC", "currency": "EUR"})
 
         with patch("meal_planner.cli._open_browser_delayed") as mock_open_delayed:
             run_meals_shortcut(args=["--no-browser", "--port=8085", self.test_dir])

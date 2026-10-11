@@ -5,10 +5,9 @@ import webbrowser
 import subprocess
 from datetime import datetime
 from meal_planner.agent import get_agent_tools, build_system_instruction
-from meal_planner.models import UserProfile
-from meal_planner.tools.onboarding import load_user_profile, init_user_profile, resolve_timezone
+from meal_planner.tools.onboarding import resolve_timezone
 from meal_planner.tools.memory import MemoryManager
-from meal_planner.tools.meal_generator import ensure_weekly_plan_artifacts, get_current_cycle_prefix
+from meal_planner.tools.artifacts import get_current_cycle_prefix
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(REPO_ROOT, ".env")

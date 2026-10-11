@@ -2,10 +2,9 @@ import csv
 import os
 import re
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from meal_planner.tools.onboarding import load_user_profile, resolve_timezone
-from meal_planner.tools.meal_generator import get_current_cycle_prefix
+from meal_planner.tools.onboarding import resolve_timezone
 
 __all__ = [
     "get_meal_plan_csv",
@@ -14,17 +13,32 @@ __all__ = [
     "update_grocery_list_csv",
     "get_batch_cook_csv",
     "update_batch_cook_csv",
-    "check_meal_plan_csv"
+    "check_meal_plan_csv",
+    "get_current_cycle_prefix"
 ]
+
+DAY_NAME_MAP = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6
+}
+
+def get_current_cycle_prefix(
+    user_timezone: str = "Europe/Brussels",
+    reference_dt: Optional[datetime] = None,
+    week_start_day: str = "Saturday"
+) -> str:
+    """Calculates the YYMMDD prefix for the cycle start date based on week_start_day."""
+    tz = resolve_timezone(user_timezone)
+    now = reference_dt if reference_dt is not None else datetime.now(tz)
+    start_wd = DAY_NAME_MAP.get(week_start_day.lower(), 5)
+    days_since_start = (now.weekday() - start_wd) % 7
+    cycle_start = now - timedelta(days=days_since_start)
+    return cycle_start.strftime("%y%m%d")
 
 def _resolve_plan_path(data_dir: str, filename_pattern: str, prefix: Optional[str] = None) -> str:
     """Finds or resolves the path to an active plan file."""
-    profile = load_user_profile(data_dir)
-    user_tz = profile.timezone if profile else "Europe/Brussels"
-    week_start = getattr(profile, "week_start_day", "Saturday") if profile else "Saturday"
-    
     if prefix is None:
-        prefix = get_current_cycle_prefix(user_tz, week_start_day=week_start)
+        prefix = get_current_cycle_prefix("Europe/Brussels", week_start_day="Saturday")
     
     plans_dir = os.path.join(data_dir, "plans")
     os.makedirs(plans_dir, exist_ok=True)
