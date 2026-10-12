@@ -7,7 +7,12 @@ from datetime import datetime
 from meal_planner.agent import get_agent_tools, build_system_instruction
 from meal_planner.tools.onboarding import resolve_timezone
 from meal_planner.tools.memory import MemoryManager
-from meal_planner.tools.artifacts import get_current_cycle_prefix
+from meal_planner.tools.artifacts import (
+    get_current_cycle_prefix,
+    get_meal_plan_csv,
+    get_grocery_list_csv,
+    get_batch_cook_csv,
+)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_PATH = os.path.join(REPO_ROOT, ".env")
@@ -284,11 +289,32 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                     active_plan = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
                     print(f"\nAgent > Your weekly meal plan is stored at: {active_plan}\n(Ask me explicitly to 'print the plan' if you wish to see all rows in chat).\n")
                 elif "print the plan" in lower or "show the plan" in lower:
-                    print(f"\nAgent > {tools_map['tool_get_meal_plan']()}\n")
+                    rows = get_meal_plan_csv(data_dir)
+                    if rows:
+                        lines = ["| Date | Meal | Recipe | Ingredients | P | C | F | Kcal |", "|---|---|---|---|---|---|---|---|"]
+                        for r in rows:
+                            lines.append(f"| {r.get('Date')} | {r.get('Meal')} | {r.get('Recipe')} | {r.get('Ingredient')} | {r.get('P')} | {r.get('C')} | {r.get('F')} | {r.get('Calories')} |")
+                        print(f"\nAgent >\n" + "\n".join(lines) + "\n")
+                    else:
+                        print("\nAgent > No meal plan found.\n")
                 elif "groceries" in lower or "grocery" in lower:
-                    print(f"\nAgent > {tools_map['tool_get_grocery_list']()}\n")
+                    rows = get_grocery_list_csv(data_dir)
+                    if rows:
+                        lines = ["| Run | Category | Item | Quantity_g | Estimated_Price_EUR |", "|---|---|---|---|---|"]
+                        for r in rows:
+                            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {r.get('Quantity_g')} | {r.get('Estimated_Price_EUR')} |")
+                        print(f"\nAgent >\n" + "\n".join(lines) + "\n")
+                    else:
+                        print("\nAgent > No grocery list found.\n")
                 elif "batch" in lower:
-                    print(f"\nAgent > {tools_map['tool_get_batch_cook']()}\n")
+                    rows = get_batch_cook_csv(data_dir)
+                    if rows:
+                        lines = ["| Dish | Main Protein | Meals |", "|---|---|---|"]
+                        for r in rows:
+                            lines.append(f"| {r.get('Dish')} | {r.get('Main_Protein')} | {r.get('Meals')} |")
+                        print(f"\nAgent >\n" + "\n".join(lines) + "\n")
+                    else:
+                        print("\nAgent > No batch cook instructions found.\n")
                 else:
                     print("\nAgent > Command received. Set GEMINI_API_KEY to enable full live LLM reasoning for any natural language input.\n")
 

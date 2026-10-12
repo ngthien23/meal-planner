@@ -71,7 +71,7 @@ class TestMealPlanValidator(unittest.TestCase):
         self.assertIn("[NEEDS FIXING]", res["message"])
         self.assertIn("Calories too low", res["message"])
         self.assertIn("Protein too low", res["message"])
-        self.assertIn("Request: Please adjust the meal plan using tool_update_meal_plan", res["message"])
+        self.assertIn("Request: Please adjust the meal plan using tool_update_plans", res["message"])
 
     def test_check_meal_plan_with_carried_deficit_from_last_week(self):
         """Verifies that carried deficit from last week in weekly memory increases the target calories & protein to be eaten."""

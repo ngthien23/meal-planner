@@ -32,6 +32,7 @@ class TestMemoryAgentIntegration(unittest.TestCase):
         self.assertIn("POINT TO THE ARTIFACT FILE", prompt)
 
     def test_dated_artifact_integration(self):
+        from meal_planner.tools.artifacts import get_meal_plan_csv, get_grocery_list_csv
         tools = get_agent_tools(self.test_dir)
         tools_map = {t.__name__: t for t in tools}
 
@@ -42,9 +43,9 @@ class TestMemoryAgentIntegration(unittest.TestCase):
         )
         self.assertIn("Saved to long-term memory", save_msg)
 
-        # Update meal plan
-        update_plan_msg = tools_map["tool_update_meal_plan"]([
-            {
+        # Update meal plan and grocery list in ONE consolidated tool call!
+        update_plans_msg = tools_map["tool_update_plans"](
+            meal_entries=[{
                 "Date": "2026-10-15",
                 "Meal": "Dinner",
                 "Recipe": "Double Whey Shake",
@@ -53,31 +54,24 @@ class TestMemoryAgentIntegration(unittest.TestCase):
                 "C": 10,
                 "F": 4,
                 "Calories": 300
-            }
-        ])
-        self.assertIn("Successfully updated", update_plan_msg)
-
-        # Get meal plan
-        plan_str = tools_map["tool_get_meal_plan"](target_date="2026-10-15")
-        self.assertIn("Double Whey Shake", plan_str)
-        self.assertIn("300", plan_str)
-
-        # Update grocery list
-        update_groc_msg = tools_map["tool_update_grocery_list"]([
-            {
+            }],
+            grocery_entries=[{
                 "Run": "2026-10-15 Run",
                 "Category": "supplement",
                 "Item": "ON Whey Gold Standard",
                 "Quantity_g": 900,
                 "Estimated_Price_EUR": 35.00
-            }
-        ])
-        self.assertIn("Successfully updated grocery list", update_groc_msg)
+            }]
+        )
+        self.assertIn("Meal Plan: Successfully updated", update_plans_msg)
+        self.assertIn("Grocery List: Successfully updated", update_plans_msg)
 
-        # View groceries
-        g_msg = tools_map["tool_get_grocery_list"]()
-        self.assertIn("ON Whey Gold Standard", g_msg)
-        self.assertIn("900g", g_msg)
+        # Verify on disk
+        plan_rows = get_meal_plan_csv(self.test_dir, target_date="2026-10-15")
+        self.assertTrue(any("Double Whey Shake" in r.get("Recipe", "") for r in plan_rows))
+
+        grocery_rows = get_grocery_list_csv(self.test_dir)
+        self.assertTrue(any("ON Whey Gold Standard" in r.get("Item", "") for r in grocery_rows))
 
 
 if __name__ == "__main__":

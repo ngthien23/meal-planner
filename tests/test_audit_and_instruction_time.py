@@ -52,12 +52,7 @@ class TestAuditAndInstructionTime(unittest.TestCase):
         tool_names = set(t.__name__ for t in tools)
         expected_tools = {
             "tool_save_memory_note",
-            "tool_get_meal_plan",
-            "tool_update_meal_plan",
-            "tool_get_grocery_list",
-            "tool_update_grocery_list",
-            "tool_get_batch_cook",
-            "tool_update_batch_cook",
+            "tool_update_plans",
             "tool_check_meal_plan",
         }
         self.assertEqual(tool_names, expected_tools)

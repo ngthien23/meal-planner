@@ -69,7 +69,34 @@ def build_system_instruction(
             )
         weekly_plan_context = "\n".join(lines)
     else:
-        weekly_plan_context = "  (No weekly meal plan generated yet. Generate the baseline plan using tool_update_meal_plan.)"
+        weekly_plan_context = "  (No weekly meal plan generated yet. Generate the baseline plan using tool_update_plans.)"
+
+    batch_rows = get_batch_cook_csv(data_dir, prefix=prefix)
+    if batch_rows:
+        lines = [
+            "| Dish | Main Protein | Meals |",
+            "|---|---|---|"
+        ]
+        for r in batch_rows:
+            lines.append(f"| {r.get('Dish')} | {r.get('Main_Protein')} | {r.get('Meals')} |")
+        batch_cook_context = "\n".join(lines)
+    else:
+        batch_cook_context = "  (No batch cook instructions generated yet.)"
+
+    grocery_rows = get_grocery_list_csv(data_dir, prefix=prefix)
+    if grocery_rows:
+        lines = [
+            "| Run | Category | Item | Quantity_g | Estimated_Price_EUR |",
+            "|---|---|---|---|---|"
+        ]
+        for r in sorted(grocery_rows, key=lambda x: _run_sort_key(x.get("Run", ""))):
+            lines.append(
+                f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | "
+                f"{r.get('Quantity_g')} | {r.get('Estimated_Price_EUR')} |"
+            )
+        grocery_list_context = "\n".join(lines)
+    else:
+        grocery_list_context = "  (No grocery list generated yet.)"
 
     is_onboarded = len(mem_ctx["long_term"]) > 0 and any(
         any(k in n.lower() for k in ("bodyweight", "target calories", "calorie", "kg", "kcal", "protein"))
@@ -87,7 +114,7 @@ Prompt the user for their profile and preferences:
 - Preferred protein intake
 - Weekly budget for protein and preferred currency
 - Qualitative eating preferences
-Once provided, save each to Long-Term Memory via tool_save_memory_note(note, tier='long_term'), generate initial meal and grocery plans using tool_update_meal_plan and tool_update_grocery_list, and point the user to {active_plan_csv}."""
+Once provided, save each to Long-Term Memory via tool_save_memory_note(note, tier='long_term'), generate initial meal, batch cook, and grocery plans using tool_update_plans, and point the user to {active_plan_csv}."""
 
     return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant.
 
@@ -112,29 +139,33 @@ ATHLETE MEMORY & ACTIVE CONTEXT:
 * Active Weekly Meal Plan (Full Context):
 {weekly_plan_context}
 
+* Active Batch Cook Instructions (Full Context):
+{batch_cook_context}
+
+* Active Grocery List (Full Context):
+{grocery_list_context}
+
 COMMUNICATION POLICY:
 1. PRECISION & BREVITY: Be direct and concise. Avoid unsolicited summaries or conversational filler.
 2. POINT TO THE ARTIFACT FILE: When asked about schedules, meal plans, or recipes, point the user to {active_plan_csv}. Only print tabular meal rows in chat if explicitly requested.
 3. MEMORY RETENTION: Use tool_save_memory_note(note, tier='weekly') for dated on-hand stock, meal deviations, or carried deficits. Use tier='long_term' for profile stats and lasting preferences. Do not record conversational chatter.
 4. NO RIGID LOCAL NUTRITION OR PRICE BOOKKEEPING: Do not maintain local tracking tables for prices or nutrition facts; rely on reasoning and search.
 5. MACRONUTRIENT NOTATION (NO GRAMS FOR P/C/F): Always express macronutrients by attaching the letter directly to the number (e.g. 40P, 50C, 15F). Never write grams or 'g' for protein, carbs, or fat. Food portion weights use standard units (g, kg), and energy uses kcal.
-6. TOOL CALLING EFFICIENCY (NO REDUNDANT READS OR CHECKS):
-   - FULL WEEK CONTEXT INJECTED: The active weekly meal plan is already provided in your context above under Active Weekly Meal Plan. Do NOT call tool_get_meal_plan to inspect the plan.
-   - DIRECT UPDATE: When asked to change or adapt meals, decide the changes and directly call tool_update_meal_plan(meal_entries).
-   - AUTOMATIC PLAN VALIDATION: tool_update_meal_plan automatically executes nutritional verification upon writing and returns the validation report. You do NOT need to call tool_check_meal_plan yourself!
-   - NO PRE-CHECKS: NEVER call tool_check_meal_plan before updating a meal plan.
-   - NO POST-UPDATE READS: When an update tool succeeds (tool_update_meal_plan, tool_update_grocery_list, tool_update_batch_cook), the artifact is already updated and saved on disk. Do NOT call tool_get_meal_plan, and Do NOT call tool_get_grocery_list or re-read the file unless the user explicitly requested to view it.
-   - If you only need to check if a grocery list exists or view run names, call tool_get_grocery_list(summary_only=True) to save tokens.
-   - NEVER call tool_check_meal_plan when updating groceries or batch cooking.
+6. TOOL CALLING EFFICIENCY (CONSOLIDATED PLAN TOOL):
+   - FULL SHORT-TERM CONTEXT INJECTED: The active weekly meal plan, batch cook instructions, and grocery list are already fully provided in your context above under Active Context. You do NOT need to call any tool to inspect or read plans.
+   - SINGLE CONSOLIDATED UPDATE TOOL: Use tool_update_plans to modify, replace, or add entries across any plan. When a request impacts multiple plans (e.g. craving, new stock on hand, batch cooking), pass meal_entries, batch_cook_entries, and/or grocery_entries together in strictly ONE single tool call.
+   - AUTOMATIC PLAN VALIDATION: tool_update_plans automatically executes nutritional verification upon writing meal entries and returns the validation report. You do NOT need to call tool_check_meal_plan yourself!
+   - NO PRE-CHECKS: NEVER call tool_check_meal_plan before updating plans.
+   - NO POST-UPDATE READS: When tool_update_plans succeeds, the artifacts are already updated and saved on disk. Do NOT re-read files unless the user explicitly requested to view them.
 
 MULTIMODAL PHOTO HANDLING:
 1. GROCERY BILLS / RECEIPT PHOTOS:
    - PRIMARY PURPOSE: Note purchased protein stock in Short-Term Memory with date via tool_save_memory_note(note, tier='weekly').
    - IGNORE non-protein items for stock tracking (stock tracking tracks PROTEIN ONLY).
-   - Estimate prices using reasoning and web search. Adjust meal plan (tool_update_meal_plan) and grocery list (tool_update_grocery_list) if purchases altered planned protein.
+   - Estimate prices using reasoning and web search. Adjust meal plan and grocery list via tool_update_plans if purchases altered planned protein.
 2. MEAL CONSUMPTION PHOTOS:
    - Identify ingredients and estimate nutritional content from portion sizes.
-   - If a meal deviates from the plan, note the deviation in Short-Term Memory via tool_save_memory_note(note, tier='weekly') and adjust upcoming meals using tool_update_meal_plan.
+   - If a meal deviates from the plan, note the deviation in Short-Term Memory via tool_save_memory_note(note, tier='weekly') and adjust upcoming meals using tool_update_plans.
 
 PLANNING PRINCIPLES:
 1. TRAIN OF THOUGHT:
@@ -153,18 +184,15 @@ PLANNING PRINCIPLES:
    - Exhaust on-hand protein across consecutive meals until depleted before introducing new cuts.
 4. DYNAMIC GROCERY CADENCE:
    - Restock perishable groceries at dynamic intervals based on shelf life, shifting the next shopping run to the date on-hand stock is exhausted.
-   - Read the current list via tool_get_grocery_list before determining changes (use summary_only=True if only checking existence).
-   - Update the grocery list directly via tool_update_grocery_list; the list is automatically sorted by [Run, Category] upon writing.
-   - Do NOT re-read the grocery list after updating it. NEVER call tool_check_meal_plan for grocery updates.
+   - Update grocery runs via tool_update_plans(grocery_entries=[...], grocery_mode='merge'/'replace'). The list is automatically sorted by [Run, Category] upon writing.
 5. RETROSPECTIVE DEVIATIONS:
    - If a meal is skipped or eaten out, record a dated note in Short-Term Memory via tool_save_memory_note(note, tier='weekly'). Eating out does not deduct home inventory. Distribute missed calories or protein across remaining days within comfortable limits.
 6. BATCH COOK PLANNING:
-   - Persist batch dishes to {active_batch_csv} using tool_update_batch_cook. Specify Dish (name only), Main_Protein (protein name and weight), and Meals (number of meals covered).
+   - Persist batch dishes to {active_batch_csv} via tool_update_plans(batch_cook_entries=[...]). Specify Dish (name only), Main_Protein (protein name and weight), and Meals (number of meals covered).
 7. PLAN VERIFICATION:
-   - Nutritional validation runs automatically inside tool_update_meal_plan whenever meals are modified.
-   - You do NOT need to call tool_check_meal_plan manually after tool_update_meal_plan.
+   - Nutritional validation runs automatically inside tool_update_plans whenever meal_entries are modified.
+   - You do NOT need to call tool_check_meal_plan manually after updating plans.
    - NEVER call tool_check_meal_plan before modifying a meal plan.
-   - NEVER call tool_check_meal_plan for grocery list or batch cook updates; it is strictly a nutritional macro validator for weekly meal plans.
 """
 
 def get_agent_tools(data_dir: str = "data") -> list[Callable]:
@@ -185,16 +213,84 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         else:
             return f"Memory note ignored: {res.get('reason', 'trivial or duplicate')}."
 
-    def tool_get_meal_plan(target_date: Optional[str] = None) -> str:
-        """Reads the active weekly meal plan CSV.
+    def tool_update_plans(
+        meal_entries: Optional[list[dict]] = None,
+        batch_cook_entries: Optional[list[dict]] = None,
+        grocery_entries: Optional[list[dict]] = None,
+        grocery_mode: str = "merge",
+        **kwargs
+    ) -> str:
+        """Consolidated plan management tool. Updates, replaces, or adds entries across meal plans, batch cooking, and grocery lists in a SINGLE call.
         
-        EFFICIENCY RULES:
-        - The full weekly plan is already provided in your context prompt. Do NOT call this tool just to inspect the plan.
-        - NEVER call this tool after calling tool_update_meal_plan; updates are already saved to disk.
+        Use this tool to persist planned dishes, craving substitutions, stock exhaustion meals, batch cooking dishes, and grocery runs.
+        Calling this tool automatically saves the artifacts to disk and executes nutritional validation on updated meals.
+        Do NOT call redundant read or check tools afterwards.
         
         Args:
-            target_date: Optional 'YYYY-MM-DD' date filter to view meals for a specific day.
+            meal_entries: Optional list of meal dicts to update/add in the active weekly meal plan.
+                          Each dict requires: 'Date' (YYYY-MM-DD), 'Meal' ('Breakfast', 'Lunch', 'Dinner', 'Snack'),
+                          'Recipe', 'Ingredient', 'P', 'C', 'F', 'Calories'.
+                          Example: [{'Date': '2026-10-10', 'Meal': 'Lunch', 'Recipe': 'Air Fried Crispy Chicken',
+                                     'Ingredient': '250g Chicken Wings; 250g Chicken Thighs; 150g Jasmine Rice',
+                                     'P': 55, 'C': 45, 'F': 18, 'Calories': 560}]
+            batch_cook_entries: Optional list of batch cooking dish dicts to persist to batch cook instructions.
+                                Each dict requires: 'Dish' (name only), 'Main_Protein' (protein name and raw weight, e.g. '1000g Pork Belly'),
+                                'Meals' (number of meals covered, e.g. 3).
+                                Example: [{'Dish': 'Thịt Kho Tàu', 'Main_Protein': '1000g Pork Belly', 'Meals': 3}]
+            grocery_entries: Optional list of grocery item dicts to update, add, or prune in the grocery list.
+                             Each dict requires: 'Run' (e.g. '2026-10-12 Dynamic Run'), 'Category' ('meat', 'produce', 'carbs', 'dairy', 'pantry', 'other'),
+                             'Item', 'Quantity_g' (integer grams; <= 0 prunes the item), 'Estimated_Price_EUR'.
+                             Example: [{'Run': '2026-10-12 Dynamic Run', 'Category': 'meat', 'Item': 'Chicken Breast', 'Quantity_g': 1000, 'Estimated_Price_EUR': 9.50}]
+            grocery_mode: 'merge' (default) to update/add/prune specified grocery items, or 'replace' to overwrite the whole grocery list.
         """
+        if batch_cook_entries is None and "dishes" in kwargs:
+            batch_cook_entries = kwargs["dishes"]
+        if "plan_type" in kwargs and "entries" in kwargs:
+            ptype = str(kwargs["plan_type"]).lower()
+            if "meal" in ptype and meal_entries is None:
+                meal_entries = kwargs["entries"]
+            elif "batch" in ptype and batch_cook_entries is None:
+                batch_cook_entries = kwargs["entries"]
+            elif "groc" in ptype and grocery_entries is None:
+                grocery_entries = kwargs["entries"]
+
+        results = []
+
+        if meal_entries:
+            m_res = update_meal_plan_csv(data_dir, meal_entries)
+            results.append(f"Meal Plan: {m_res.get('message', 'Meal plan updated.')}")
+            check_res = check_meal_plan_csv(data_dir)
+            check_msg = check_res.get("message", "")
+            results.append(f"[AUTOMATIC PLAN VALIDATION]:\n{check_msg}")
+
+        if batch_cook_entries:
+            b_res = update_batch_cook_csv(data_dir, batch_cook_entries)
+            results.append(f"Batch Cook: {b_res.get('message', 'Batch cook instructions updated.')}")
+
+        if grocery_entries:
+            g_res = update_grocery_list_csv(data_dir, grocery_entries, mode=grocery_mode)
+            results.append(f"Grocery List: {g_res.get('message', 'Grocery list updated.')}")
+
+        if not results:
+            return (
+                "No plan updates provided. The active meal plan, batch cook instructions, "
+                "and grocery list are already loaded in your short-term context above."
+            )
+
+        return "\n\n".join(results) + "\n\nArtifacts are saved to disk. Do NOT call redundant read or check tools."
+
+    tool_update_plan = tool_update_plans
+
+    def tool_update_meal_plan(meal_entries: list[dict]) -> str:
+        return tool_update_plans(meal_entries=meal_entries)
+
+    def tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str:
+        return tool_update_plans(grocery_entries=grocery_entries, grocery_mode=mode)
+
+    def tool_update_batch_cook(dishes: list[dict]) -> str:
+        return tool_update_plans(batch_cook_entries=dishes)
+
+    def tool_get_meal_plan(target_date: Optional[str] = None) -> str:
         rows = get_meal_plan_csv(data_dir, target_date=target_date)
         if not rows:
             return "No meal plan found. Generate a baseline plan first."
@@ -203,82 +299,29 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             lines.append(f"| {r.get('Date')} | {r.get('Meal')} | {r.get('Recipe')} | {r.get('Ingredient')} | {r.get('P')} | {r.get('C')} | {r.get('F')} | {r.get('Calories')} |")
         return "\n".join(lines)
 
-    def tool_update_meal_plan(meal_entries: list[dict]) -> str:
-        """Updates, replaces, or adds meal slots directly in the active weekly meal plan CSV.
-        
-        Use this tool to persist planned dishes, craving substitutions, or stock exhaustion meals.
-        Calling this tool saves the CSV directly to disk and automatically executes nutritional validation.
-        Do NOT call tool_get_meal_plan or tool_check_meal_plan afterwards.
-        
-        Args:
-            meal_entries: List of meal dicts. Each must include 'Date' and 'Meal' ('Breakfast', 'Lunch', 'Dinner', 'Snack'),
-                          plus 'Recipe', 'Ingredient', 'P', 'C', 'F', 'Calories'.
-                          Example: [{'Date': '2026-10-10', 'Meal': 'Lunch', 'Recipe': 'Air Fried Crispy Chicken',
-                                     'Ingredient': '250g Chicken Wings; 250g Chicken Thighs; 150g Jasmine Rice',
-                                     'P': 55, 'C': 45, 'F': 18, 'Calories': 560}]
-        """
-        res = update_meal_plan_csv(data_dir, meal_entries)
-        check_res = check_meal_plan_csv(data_dir)
-        check_msg = check_res.get("message", "")
-        return (
-            f"{res.get('message', 'Meal plan updated.')} Artifact is saved to disk. Do NOT call tool_get_meal_plan.\n\n"
-            f"[AUTOMATIC PLAN VALIDATION]:\n{check_msg}"
-        )
-
     def tool_get_grocery_list(run_name: Optional[str] = None, summary_only: bool = False) -> str:
-        """Reads the active split grocery list CSV.
-        
-        Args:
-            run_name: Optional run name filter (e.g. 'Saturday Run' or '2026-10-13 Run') to view only items for that run.
-            summary_only: If True, returns only a compact 1-line existence and run summary instead of the full table, saving tokens.
-        """
         rows = get_grocery_list_csv(data_dir)
         if not rows:
             return "No grocery list found."
-
         runs = []
         for r in sorted(rows, key=lambda x: _run_sort_key(x.get("Run", ""))):
             run_val = r.get("Run", "").strip()
             if run_val and run_val not in runs:
                 runs.append(run_val)
-
         if summary_only:
             runs_str = ", ".join(runs) if runs else "None"
             return f"Grocery list exists ({len(rows)} items across {len(runs)} run(s): {runs_str})."
-
         if run_name:
             filtered = [r for r in rows if run_name.lower() in str(r.get("Run", "")).lower()]
             if not filtered:
                 return f"No items found for run '{run_name}'. Available runs: {', '.join(runs)}."
             rows = filtered
-
-        lines = ["| Run | Category | Item | Quantity (g) | Est. Price (€) |", "|---|---|---|---|---|"]
-        for r in rows:
-            qty_val = str(r.get("Quantity_g") or r.get("Quantity") or "0").rstrip("g").strip()
-            price_val = str(r.get("Estimated_Price_EUR", "0.00")).replace("€", "").replace("$", "").replace("£", "").strip()
-            try:
-                price_str = f"{float(price_val):.2f}"
-            except ValueError:
-                price_str = price_val
-            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {qty_val}g | €{price_str} |")
+        lines = ["| Run | Category | Item | Quantity_g | Estimated_Price_EUR |", "|---|---|---|---|---|"]
+        for r in sorted(rows, key=lambda x: _run_sort_key(x.get("Run", ""))):
+            lines.append(f"| {r.get('Run')} | {r.get('Category')} | {r.get('Item')} | {r.get('Quantity_g')} | {r.get('Estimated_Price_EUR')} |")
         return "\n".join(lines)
 
-    def tool_update_grocery_list(grocery_entries: list[dict], mode: str = "merge") -> str:
-        """Updates or replaces the active grocery list CSV.
-        
-        Use this tool to add, update, or prune grocery items. Calling this tool updates the CSV directly;
-        do NOT call tool_get_grocery_list afterwards unless the user specifically asks to see the list.
-        NEVER call tool_check_meal_plan after updating groceries.
-        
-        Args:
-            grocery_entries: List of items [{'Run': '2026-10-13 Run', 'Category': 'meat', 'Item': 'Chicken Breast', 'Quantity_g': 1000, 'Estimated_Price_EUR': 9.50}]
-            mode: 'replace' to overwrite the whole list with shifted runs, or 'merge' to update items (Quantity_g <= 0 prunes the item).
-        """
-        res = update_grocery_list_csv(data_dir, grocery_entries, mode=mode)
-        return res.get("message", "Grocery list updated.")
-
     def tool_get_batch_cook() -> str:
-        """Reads the active batch cook CSV artifact."""
         rows = get_batch_cook_csv(data_dir)
         if not rows:
             return "No batch cook instructions found."
@@ -286,19 +329,6 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         for r in rows:
             lines.append(f"| {r.get('Dish')} | {r.get('Main_Protein')} | {r.get('Meals')} |")
         return "\n".join(lines)
-
-    def tool_update_batch_cook(dishes: list[dict]) -> str:
-        """Updates the active batch cook CSV artifact.
-        
-        Args:
-            dishes: List of batch-cooked dish dicts:
-                    [{'Dish': 'Thịt Kho Tàu', 'Main_Protein': '1000g Pork Belly', 'Meals': 3}]
-                    - 'Dish': The dish name (just the name, no dish weight required).
-                    - 'Main_Protein': The main protein and amount in grams or kg (e.g. '1000g Pork Belly', '1kg Chicken Thighs'). This is the ONLY ingredient to list.
-                    - 'Meals': How many meals this batch cook covers (e.g. 3).
-        """
-        res = update_batch_cook_csv(data_dir, dishes)
-        return res.get("message", "Batch cook instructions updated.")
 
     _last_check_cache: dict[tuple, str] = {}
 
@@ -310,12 +340,12 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
     ) -> str:
         """Checks the weekly meal plan sums against target calories and macros (P/C/F).
         
-        NOTE: tool_update_meal_plan ALREADY runs nutritional validation automatically upon updating.
+        NOTE: tool_update_plans ALREADY runs nutritional validation automatically upon updating meal plans.
         You do NOT need to call this tool after updating a meal plan.
         
         EFFICIENCY RULES:
         - NEVER call this tool before modifying a meal plan.
-        - NEVER call this tool after tool_update_meal_plan (validation runs automatically).
+        - NEVER call this tool after tool_update_plans (validation runs automatically).
         - NEVER call this tool when updating groceries or batch cooking.
         
         Args:
@@ -347,12 +377,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
 
     return [
         tool_save_memory_note,
-        tool_get_meal_plan,
-        tool_update_meal_plan,
-        tool_get_grocery_list,
-        tool_update_grocery_list,
-        tool_get_batch_cook,
-        tool_update_batch_cook,
+        tool_update_plans,
         tool_check_meal_plan,
     ]
 

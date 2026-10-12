@@ -44,63 +44,60 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         mem_ctx = MemoryManager(self.test_dir).get_context()
         self.assertTrue(any("Chicken Wings" in n and "500g" in n for n in mem_ctx["weekly"]))
 
-        # 2. Agent updates meal plan:
-        # Next meal (Saturday Lunch) -> Air Fried Chicken craving (250g wings, 250g thighs)
-        # Saturday Dinner -> Chicken Soup (250g wings) to respect soft dinner texture
-        # Sunday Lunch -> Remaining chicken (250g thighs)
-        update_meal_plan_fn = self.tools["tool_update_meal_plan"]
-        plan_update_msg = update_meal_plan_fn([
-            {
-                "Date": "2026-10-10",
-                "Meal": "Lunch",
-                "Recipe": "Air Fried Crispy Chicken",
-                "Ingredient": "250g Chicken Wings; 250g Chicken Thigh Quarters; 150g Jasmine Rice",
-                "P": 60,
-                "C": 45,
-                "F": 20,
-                "Calories": 600
-            },
-            {
-                "Date": "2026-10-10",
-                "Meal": "Dinner",
-                "Recipe": "Comforting Chicken Soup with Rice Noodles",
-                "Ingredient": "250g Chicken Wings; 100g Rice Noodles; 50g Greens",
-                "P": 35,
-                "C": 40,
-                "F": 12,
-                "Calories": 410
-            },
-            {
-                "Date": "2026-10-11",
-                "Meal": "Lunch",
-                "Recipe": "Pan-Seared Thigh Quarters with Sweet Potato",
-                "Ingredient": "250g Chicken Thigh Quarters; 200g Sweet Potato",
-                "P": 45,
-                "C": 45,
-                "F": 15,
-                "Calories": 495
-            }
-        ])
-        self.assertIn("Successfully updated", plan_update_msg)
+        # 2. Agent updates BOTH meal plan and grocery list in ONE single call to tool_update_plans!
+        update_plans_fn = self.tools["tool_update_plans"]
+        combined_msg = update_plans_fn(
+            meal_entries=[
+                {
+                    "Date": "2026-10-10",
+                    "Meal": "Lunch",
+                    "Recipe": "Air Fried Crispy Chicken",
+                    "Ingredient": "250g Chicken Wings; 250g Chicken Thigh Quarters; 150g Jasmine Rice",
+                    "P": 60,
+                    "C": 45,
+                    "F": 20,
+                    "Calories": 600
+                },
+                {
+                    "Date": "2026-10-10",
+                    "Meal": "Dinner",
+                    "Recipe": "Comforting Chicken Soup with Rice Noodles",
+                    "Ingredient": "250g Chicken Wings; 100g Rice Noodles; 50g Greens",
+                    "P": 35,
+                    "C": 40,
+                    "F": 12,
+                    "Calories": 410
+                },
+                {
+                    "Date": "2026-10-11",
+                    "Meal": "Lunch",
+                    "Recipe": "Pan-Seared Thigh Quarters with Sweet Potato",
+                    "Ingredient": "250g Chicken Thigh Quarters; 200g Sweet Potato",
+                    "P": 45,
+                    "C": 45,
+                    "F": 15,
+                    "Calories": 495
+                }
+            ],
+            grocery_entries=[
+                {"Run": "2026-10-12 Dynamic Run", "Category": "meat", "Item": "Ground Beef (5% Fat)", "Quantity_g": 1000, "Estimated_Price_EUR": 11.50},
+                {"Run": "2026-10-12 Dynamic Run", "Category": "vegetable", "Item": "Broccoli", "Quantity_g": 500, "Estimated_Price_EUR": 2.00}
+            ],
+            grocery_mode="replace"
+        )
+        self.assertIn("Meal Plan: Successfully updated", combined_msg)
+        self.assertIn("Grocery List: Successfully updated", combined_msg)
+        self.assertIn("[AUTOMATIC PLAN VALIDATION]:", combined_msg)
 
-        # Verify meal plan artifact is updated
-        get_plan_fn = self.tools["tool_get_meal_plan"]
-        sat_plan = get_plan_fn(target_date="2026-10-10")
-        self.assertIn("Air Fried Crispy Chicken", sat_plan)
-        self.assertIn("Comforting Chicken Soup", sat_plan)
+        # Verify meal plan artifact is updated on disk
+        from meal_planner.tools.artifacts import get_meal_plan_csv, get_grocery_list_csv
+        plan_rows = get_meal_plan_csv(self.test_dir, target_date="2026-10-10")
+        self.assertTrue(any("Air Fried Crispy Chicken" in r.get("Recipe", "") for r in plan_rows))
+        self.assertTrue(any("Comforting Chicken Soup" in r.get("Recipe", "") for r in plan_rows))
 
-        # 4. Agent dynamically shifts grocery run to D_exhaust (Sunday evening / Monday)
-        update_grocery_fn = self.tools["tool_update_grocery_list"]
-        grocery_msg = update_grocery_fn([
-            {"Run": "2026-10-12 Dynamic Run", "Category": "meat", "Item": "Ground Beef (5% Fat)", "Quantity_g": 1000, "Estimated_Price_EUR": 11.50},
-            {"Run": "2026-10-12 Dynamic Run", "Category": "vegetable", "Item": "Broccoli", "Quantity_g": 500, "Estimated_Price_EUR": 2.00}
-        ], mode="replace")
-        self.assertIn("Successfully updated grocery list", grocery_msg)
-
-        get_grocery_fn = self.tools["tool_get_grocery_list"]
-        grocery_str = get_grocery_fn()
-        self.assertIn("2026-10-12 Dynamic Run", grocery_str)
-        self.assertIn("Ground Beef", grocery_str)
+        # Verify grocery list artifact is updated on disk
+        grocery_rows = get_grocery_list_csv(self.test_dir)
+        self.assertTrue(any("Ground Beef" in r.get("Item", "") and "2026-10-12 Dynamic Run" in r.get("Run", "") for r in grocery_rows))
 
     def test_retrospective_skipped_meal_and_eating_out_workflow(self):
         save_mem_fn = self.tools["tool_save_memory_note"]
@@ -118,8 +115,8 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertTrue(any("Ate out for Lunch" in n for n in mem_ctx["weekly"]))
 
         # Agent updates meal plan for dinner or upcoming days to account for carried deficit
-        update_meal_plan_fn = self.tools["tool_update_meal_plan"]
-        plan_msg = update_meal_plan_fn([
+        update_plans_fn = self.tools["tool_update_plans"]
+        plan_msg = update_plans_fn(meal_entries=[
             {
                 "Date": "2026-10-10",
                 "Meal": "Dinner",
@@ -131,7 +128,7 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
                 "Calories": 530
             }
         ])
-        self.assertIn("Successfully updated", plan_msg)
+        self.assertIn("Meal Plan: Successfully updated", plan_msg)
 
     def test_agent_prompt_train_of_thought_and_guidelines(self):
         prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
@@ -154,66 +151,67 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("Weekly Grocery List", prompt)
         self.assertIn("MUST comprehensively include ALL food types", prompt)
 
-    def test_grocery_list_update_guidelines_in_prompt(self):
+    def test_prompt_instructs_short_term_context_and_consolidated_update_tool(self):
+        """System prompt must inject all 3 plans into short-term context and enforce tool_update_plans."""
         prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
-        self.assertNotIn("USER CONFIRMATION REQUIRED", prompt)
-        self.assertNotIn("ask the user for confirmation", prompt)
-        self.assertIn("tool_get_grocery_list", prompt)
-        self.assertIn("tool_update_grocery_list", prompt)
-        self.assertIn("sorted by [Run, Category]", prompt)
-
-    def test_grocery_list_summary_only_and_run_filter(self):
-        get_grocery_fn = self.tools["tool_get_grocery_list"]
-        # 1. Full table (default)
-        full_res = get_grocery_fn()
-        self.assertIn("| Run | Category | Item |", full_res)
-        self.assertIn("Chicken Breast", full_res)
-        self.assertIn("Broccoli", full_res)
-
-        # 2. summary_only=True returns 1-line compact summary saving tokens
-        summary_res = get_grocery_fn(summary_only=True)
-        self.assertNotIn("|---|", summary_res)
-        self.assertIn("Grocery list exists (2 items across 1 run(s): Saturday Run)", summary_res)
-
-        # 3. run_name filter
-        filtered_res = get_grocery_fn(run_name="Saturday Run")
-        self.assertIn("Chicken Breast", filtered_res)
-        not_found_res = get_grocery_fn(run_name="Wednesday Run")
-        self.assertIn("No items found for run 'Wednesday Run'", not_found_res)
-
-    def test_prompt_instructs_no_redundant_reads_or_meal_plan_validator_for_groceries(self):
-        prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
-        self.assertIn("Do NOT call tool_get_grocery_list or re-read", prompt)
-        self.assertIn("NEVER call tool_check_meal_plan when updating groceries", prompt)
-        self.assertIn("summary_only=True", prompt)
-
-    def test_prompt_instructs_no_redundant_reads_or_prechecks_for_meal_plan(self):
-        """System prompt must enforce injected weekly context, direct update, and automatic validation."""
-        prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
+        # All 3 plans loaded into context:
         self.assertIn("Active Weekly Meal Plan (Full Context):", prompt)
-        self.assertIn("FULL WEEK CONTEXT INJECTED", prompt)
-        self.assertIn("DIRECT UPDATE", prompt)
+        self.assertIn("Active Batch Cook Instructions (Full Context):", prompt)
+        self.assertIn("Active Grocery List (Full Context):", prompt)
+        self.assertIn("Chicken Breast", prompt)
+        self.assertIn("Broccoli", prompt)
+
+        # Policy guidelines:
+        self.assertIn("FULL SHORT-TERM CONTEXT INJECTED", prompt)
+        self.assertIn("SINGLE CONSOLIDATED UPDATE TOOL", prompt)
+        self.assertIn("tool_update_plans", prompt)
         self.assertIn("AUTOMATIC PLAN VALIDATION", prompt)
         self.assertIn("NO PRE-CHECKS: NEVER call tool_check_meal_plan before updating", prompt)
         self.assertIn("NO POST-UPDATE READS", prompt)
-        self.assertIn("Do NOT call tool_get_meal_plan", prompt)
 
-    def test_tool_update_meal_plan_explicitly_mentions_disk_persistence_and_no_reread(self):
-        """tool_update_meal_plan output informs LLM that file is on disk, does not need re-read, and includes automatic validation."""
-        update_fn = self.tools["tool_update_meal_plan"]
-        msg = update_fn([{
-            "Date": "2026-10-10",
-            "Meal": "Lunch",
-            "Recipe": "Quick Chicken",
-            "Ingredient": "200g Chicken",
-            "P": 40,
-            "C": 0,
-            "F": 5,
-            "Calories": 220
-        }])
-        self.assertIn("Artifact is saved to disk", msg)
-        self.assertIn("Do NOT call tool_get_meal_plan", msg)
+    def test_tool_update_plans_updates_all_three_artifacts_in_single_call(self):
+        """tool_update_plans updates meal plan, batch cook, and grocery list in ONE call and returns auto-validation."""
+        from meal_planner.tools.artifacts import get_meal_plan_csv, get_batch_cook_csv, get_grocery_list_csv
+        update_fn = self.tools["tool_update_plans"]
+        msg = update_fn(
+            meal_entries=[{
+                "Date": "2026-10-10",
+                "Meal": "Lunch",
+                "Recipe": "Quick Chicken",
+                "Ingredient": "200g Chicken",
+                "P": 40,
+                "C": 0,
+                "F": 5,
+                "Calories": 220
+            }],
+            batch_cook_entries=[{
+                "Dish": "Braised Pork",
+                "Main_Protein": "1000g Pork Belly",
+                "Meals": 3
+            }],
+            grocery_entries=[{
+                "Run": "Saturday Run",
+                "Category": "meat",
+                "Item": "Pork Belly",
+                "Quantity_g": 1000,
+                "Estimated_Price_EUR": 9.00
+            }]
+        )
+        self.assertIn("Meal Plan: Successfully updated", msg)
+        self.assertIn("Batch Cook: Successfully updated", msg)
+        self.assertIn("Grocery List: Successfully updated", msg)
         self.assertIn("[AUTOMATIC PLAN VALIDATION]:", msg)
+        self.assertIn("Artifacts are saved to disk", msg)
+
+        # Verify all 3 CSVs
+        plan_rows = get_meal_plan_csv(self.test_dir)
+        self.assertTrue(any("Quick Chicken" in r.get("Recipe", "") for r in plan_rows))
+
+        batch_rows = get_batch_cook_csv(self.test_dir)
+        self.assertTrue(any("Braised Pork" in r.get("Dish", "") for r in batch_rows))
+
+        grocery_rows = get_grocery_list_csv(self.test_dir)
+        self.assertTrue(any("Pork Belly" in r.get("Item", "") for r in grocery_rows))
 
     def test_tool_check_meal_plan_caches_unchanged_plan_to_prevent_duplicate_checks(self):
         """Repeated consecutive calls to tool_check_meal_plan without modifying plan return cached completion note."""

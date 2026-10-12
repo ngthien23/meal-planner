@@ -488,7 +488,7 @@ def check_meal_plan_csv(
         return {
             "status": "NEEDS_FIXING",
             "accepted": False,
-            "message": "[NEEDS FIXING] No meal plan found in meal_plan.csv. Please generate and save a meal plan using tool_update_meal_plan first.",
+            "message": "[NEEDS FIXING] No meal plan found in meal_plan.csv. Please generate and save a meal plan using tool_update_plans first.",
             "planned": {"calories": 0.0, "P": 0.0, "C": 0.0, "F": 0.0},
             "target": {"calories": 0.0, "P": 0.0, "C": 0.0, "F": 0.0},
             "discrepancies": ["No meals planned."]
@@ -722,7 +722,7 @@ def check_meal_plan_csv(
             f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}P | {int(planned_c)}C | {int(planned_f)}F\n"
             f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}P | {int(target_c)}C | {int(target_f)}F\n"
             f"{carried_str}\n"
-            f"Request: Please adjust the meal plan using tool_update_meal_plan to fix these discrepancies, then re-check with tool_check_meal_plan."
+            f"Request: Please adjust the meal plan using tool_update_plans to fix these discrepancies, then re-check with tool_check_meal_plan."
         )
         return {
             "status": "NEEDS_FIXING",
