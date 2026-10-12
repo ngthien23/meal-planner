@@ -201,7 +201,7 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("Batch Cook: Successfully updated", msg)
         self.assertIn("Grocery List: Successfully updated", msg)
         self.assertIn("[AUTOMATIC PLAN VALIDATION]:", msg)
-        self.assertIn("Artifacts are saved to disk", msg)
+        self.assertIn("Artifacts and memory are saved to disk", msg)
 
         # Verify all 3 CSVs
         plan_rows = get_meal_plan_csv(self.test_dir)
@@ -212,6 +212,64 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
 
         grocery_rows = get_grocery_list_csv(self.test_dir)
         self.assertTrue(any("Pork Belly" in r.get("Item", "") for r in grocery_rows))
+
+    def test_tool_update_plans_with_memory_and_plans_combined(self):
+        """tool_update_plans can simultaneously record short-term/long-term notes and update plans in a single call."""
+        from meal_planner.tools.artifacts import get_meal_plan_csv, get_grocery_list_csv
+        update_fn = self.tools["tool_update_plans"]
+        res = update_fn(
+            short_term_notes=["[2026-10-10] Stock on hand: 1kg Chicken Wings"],
+            long_term_notes=["Athlete bodyweight updated to 68.0 kg"],
+            meal_entries=[{
+                "Date": "2026-10-10",
+                "Meal": "Dinner",
+                "Recipe": "Air Fried Wings",
+                "Ingredient": "500g Chicken Wings",
+                "P": 50,
+                "C": 0,
+                "F": 35,
+                "Calories": 515
+            }],
+            grocery_entries=[{
+                "Run": "2026-10-12 Dynamic Run",
+                "Category": "meat",
+                "Item": "Chicken Breast",
+                "Quantity_g": 1000,
+                "Estimated_Price_EUR": 9.50
+            }]
+        )
+        self.assertIn("Short-Term Memory: Saved 1 note(s)", res)
+        self.assertIn("Long-Term Memory: Saved 1 note(s)", res)
+        self.assertIn("Meal Plan: Successfully updated", res)
+        self.assertIn("Grocery List: Successfully updated", res)
+        self.assertIn("[AUTOMATIC PLAN VALIDATION]:", res)
+        self.assertIn("Artifacts and memory are saved to disk", res)
+
+        # Verify memory files on disk
+        mem_ctx = MemoryManager(self.test_dir).get_context()
+        self.assertTrue(any("1kg Chicken Wings" in n for n in mem_ctx["weekly"]))
+        self.assertTrue(any("68.0 kg" in n for n in mem_ctx["long_term"]))
+
+        # Verify plan files on disk
+        plan_rows = get_meal_plan_csv(self.test_dir, target_date="2026-10-10")
+        self.assertTrue(any("Air Fried Wings" in r.get("Recipe", "") for r in plan_rows))
+
+        grocery_rows = get_grocery_list_csv(self.test_dir)
+        self.assertTrue(any("2026-10-12 Dynamic Run" in r.get("Run", "") for r in grocery_rows))
+
+    def test_tool_update_plans_memory_aliases(self):
+        """tool_update_plans accepts alias kwargs like weekly_note, weekly_notes, long_term_note, or raw string."""
+        update_fn = self.tools["tool_update_plans"]
+        res = update_fn(
+            weekly_note="[2026-10-11] Ate out for lunch",
+            long_term_note="Target Protein: 160P"
+        )
+        self.assertIn("Short-Term Memory: Saved 1 note(s)", res)
+        self.assertIn("Long-Term Memory: Saved 1 note(s)", res)
+
+        mem_ctx = MemoryManager(self.test_dir).get_context()
+        self.assertTrue(any("Ate out for lunch" in n for n in mem_ctx["weekly"]))
+        self.assertTrue(any("Target Protein: 160P" in n for n in mem_ctx["long_term"]))
 
     def test_tool_check_meal_plan_caches_unchanged_plan_to_prevent_duplicate_checks(self):
         """Repeated consecutive calls to tool_check_meal_plan without modifying plan return cached completion note."""

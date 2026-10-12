@@ -114,7 +114,7 @@ Prompt the user for their profile and preferences:
 - Preferred protein intake
 - Weekly budget for protein and preferred currency
 - Qualitative eating preferences
-Once provided, save each to Long-Term Memory via tool_save_memory_note(note, tier='long_term'), generate initial meal, batch cook, and grocery plans using tool_update_plans, and point the user to {active_plan_csv}."""
+Once provided, save each to Long-Term Memory and generate initial meal, batch cook, and grocery plans using tool_update_plans, and point the user to {active_plan_csv}."""
 
     return f"""You are the AI Meal & Grocery Planner Agent, a specialized dietary, logistics, financial, and vision-enabled assistant.
 
@@ -148,24 +148,24 @@ ATHLETE MEMORY & ACTIVE CONTEXT:
 COMMUNICATION POLICY:
 1. PRECISION & BREVITY: Be direct and concise. Avoid unsolicited summaries or conversational filler.
 2. POINT TO THE ARTIFACT FILE: When asked about schedules, meal plans, or recipes, point the user to {active_plan_csv}. Only print tabular meal rows in chat if explicitly requested.
-3. MEMORY RETENTION: Use tool_save_memory_note(note, tier='weekly') for dated on-hand stock, meal deviations, or carried deficits. Use tier='long_term' for profile stats and lasting preferences. Do not record conversational chatter.
+3. MEMORY RETENTION: Use tool_update_plans(short_term_notes=[...]) or tool_save_memory_note(note, tier='weekly') for dated on-hand stock, meal deviations, or carried deficits. Use long_term_notes for profile stats and lasting preferences. Do not record conversational chatter.
 4. NO RIGID LOCAL NUTRITION OR PRICE BOOKKEEPING: Do not maintain local tracking tables for prices or nutrition facts; rely on reasoning and search.
 5. MACRONUTRIENT NOTATION (NO GRAMS FOR P/C/F): Always express macronutrients by attaching the letter directly to the number (e.g. 40P, 50C, 15F). Never write grams or 'g' for protein, carbs, or fat. Food portion weights use standard units (g, kg), and energy uses kcal.
-6. TOOL CALLING EFFICIENCY (CONSOLIDATED PLAN TOOL):
+6. TOOL CALLING EFFICIENCY (SINGLE CONSOLIDATED UPDATE TOOL):
    - FULL SHORT-TERM CONTEXT INJECTED: The active weekly meal plan, batch cook instructions, and grocery list are already fully provided in your context above under Active Context. You do NOT need to call any tool to inspect or read plans.
-   - SINGLE CONSOLIDATED UPDATE TOOL: Use tool_update_plans to modify, replace, or add entries across any plan. When a request impacts multiple plans (e.g. craving, new stock on hand, batch cooking), pass meal_entries, batch_cook_entries, and/or grocery_entries together in strictly ONE single tool call.
+   - UNIFIED SINGLE CALL: Use tool_update_plans to modify, replace, or add entries across ANY plan and/or memory (short-term & long-term). When a request impacts memory and plans (e.g. reporting on-hand protein stock, craving adjustments, skipped meals, batch cooking), pass short_term_notes, meal_entries, batch_cook_entries, and/or grocery_entries together in strictly ONE single tool call.
    - AUTOMATIC PLAN VALIDATION: tool_update_plans automatically executes nutritional verification upon writing meal entries and returns the validation report. You do NOT need to call tool_check_meal_plan yourself!
    - NO PRE-CHECKS: NEVER call tool_check_meal_plan before updating plans.
    - NO POST-UPDATE READS: When tool_update_plans succeeds, the artifacts are already updated and saved on disk. Do NOT re-read files unless the user explicitly requested to view them.
 
 MULTIMODAL PHOTO HANDLING:
 1. GROCERY BILLS / RECEIPT PHOTOS:
-   - PRIMARY PURPOSE: Note purchased protein stock in Short-Term Memory with date via tool_save_memory_note(note, tier='weekly').
+   - PRIMARY PURPOSE: Note purchased protein stock in Short-Term Memory with date and adjust plans via tool_update_plans(short_term_notes=[...], meal_entries=[...], grocery_entries=[...]) in a single call.
    - IGNORE non-protein items for stock tracking (stock tracking tracks PROTEIN ONLY).
-   - Estimate prices using reasoning and web search. Adjust meal plan and grocery list via tool_update_plans if purchases altered planned protein.
+   - Estimate prices using reasoning and web search.
 2. MEAL CONSUMPTION PHOTOS:
    - Identify ingredients and estimate nutritional content from portion sizes.
-   - If a meal deviates from the plan, note the deviation in Short-Term Memory via tool_save_memory_note(note, tier='weekly') and adjust upcoming meals using tool_update_plans.
+   - If a meal deviates from the plan, record the deviation in Short-Term Memory and adjust upcoming meals via tool_update_plans(short_term_notes=[...], meal_entries=[...]) in a single call.
 
 PLANNING PRINCIPLES:
 1. TRAIN OF THOUGHT:
@@ -186,7 +186,7 @@ PLANNING PRINCIPLES:
    - Restock perishable groceries at dynamic intervals based on shelf life, shifting the next shopping run to the date on-hand stock is exhausted.
    - Update grocery runs via tool_update_plans(grocery_entries=[...], grocery_mode='merge'/'replace'). The list is automatically sorted by [Run, Category] upon writing.
 5. RETROSPECTIVE DEVIATIONS:
-   - If a meal is skipped or eaten out, record a dated note in Short-Term Memory via tool_save_memory_note(note, tier='weekly'). Eating out does not deduct home inventory. Distribute missed calories or protein across remaining days within comfortable limits.
+   - If a meal is skipped or eaten out, record a dated note in Short-Term Memory and adjust upcoming meal slots via tool_update_plans(short_term_notes=[...], meal_entries=[...]). Eating out does not deduct home inventory. Distribute missed calories or protein across remaining days within comfortable limits.
 6. BATCH COOK PLANNING:
    - Persist batch dishes to {active_batch_csv} via tool_update_plans(batch_cook_entries=[...]). Specify Dish (name only), Main_Protein (protein name and weight), and Meals (number of meals covered).
 7. PLAN VERIFICATION:
@@ -218,12 +218,14 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         batch_cook_entries: Optional[list[dict]] = None,
         grocery_entries: Optional[list[dict]] = None,
         grocery_mode: str = "merge",
+        short_term_notes: Optional[list[str]] = None,
+        long_term_notes: Optional[list[str]] = None,
         **kwargs
     ) -> str:
-        """Consolidated plan management tool. Updates, replaces, or adds entries across meal plans, batch cooking, and grocery lists in a SINGLE call.
+        """Consolidated artifact & memory management tool. Updates, replaces, or adds entries across meal plans, batch cooking, grocery lists, and short/long-term memories in a SINGLE call.
         
-        Use this tool to persist planned dishes, craving substitutions, stock exhaustion meals, batch cooking dishes, and grocery runs.
-        Calling this tool automatically saves the artifacts to disk and executes nutritional validation on updated meals.
+        Use this tool to persist planned dishes, craving substitutions, stock exhaustion meals, batch cooking dishes, grocery runs, and dated stock/preference notes.
+        Calling this tool automatically saves artifacts and memory to disk and executes nutritional validation on updated meals.
         Do NOT call redundant read or check tools afterwards.
         
         Args:
@@ -242,7 +244,26 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
                              'Item', 'Quantity_g' (integer grams; <= 0 prunes the item), 'Estimated_Price_EUR'.
                              Example: [{'Run': '2026-10-12 Dynamic Run', 'Category': 'meat', 'Item': 'Chicken Breast', 'Quantity_g': 1000, 'Estimated_Price_EUR': 9.50}]
             grocery_mode: 'merge' (default) to update/add/prune specified grocery items, or 'replace' to overwrite the whole grocery list.
+            short_term_notes: Optional list of strings (or single string) to record into short-term (weekly) memory (e.g. dated stock on hand, skipped meals, carried deficits).
+            long_term_notes: Optional list of strings (or single string) to record into long-term memory (e.g. profile stats, durable preferences, goals).
         """
+        if short_term_notes is None:
+            if "weekly_notes" in kwargs:
+                short_term_notes = kwargs["weekly_notes"]
+            elif "weekly_note" in kwargs:
+                short_term_notes = kwargs["weekly_note"]
+            elif "short_term_note" in kwargs:
+                short_term_notes = kwargs["short_term_note"]
+
+        if long_term_notes is None:
+            if "long_term_note" in kwargs:
+                long_term_notes = kwargs["long_term_note"]
+
+        if isinstance(short_term_notes, str):
+            short_term_notes = [short_term_notes]
+        if isinstance(long_term_notes, str):
+            long_term_notes = [long_term_notes]
+
         if batch_cook_entries is None and "dishes" in kwargs:
             batch_cook_entries = kwargs["dishes"]
         if "plan_type" in kwargs and "entries" in kwargs:
@@ -255,6 +276,25 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
                 grocery_entries = kwargs["entries"]
 
         results = []
+        mgr = MemoryManager(data_dir)
+
+        if short_term_notes:
+            saved_notes = []
+            for n in short_term_notes:
+                r = mgr.add_note(n, tier="weekly")
+                if r.get("status") == "saved":
+                    saved_notes.append(n)
+            if saved_notes:
+                results.append(f"Short-Term Memory: Saved {len(saved_notes)} note(s) ('{'; '.join(saved_notes)}').")
+
+        if long_term_notes:
+            saved_notes = []
+            for n in long_term_notes:
+                r = mgr.add_note(n, tier="long_term")
+                if r.get("status") == "saved":
+                    saved_notes.append(n)
+            if saved_notes:
+                results.append(f"Long-Term Memory: Saved {len(saved_notes)} note(s) ('{'; '.join(saved_notes)}').")
 
         if meal_entries:
             m_res = update_meal_plan_csv(data_dir, meal_entries)
@@ -273,13 +313,14 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
 
         if not results:
             return (
-                "No plan updates provided. The active meal plan, batch cook instructions, "
-                "and grocery list are already loaded in your short-term context above."
+                "No updates provided. The active meal plan, batch cook instructions, "
+                "grocery list, and memories are already loaded in your context above."
             )
 
-        return "\n\n".join(results) + "\n\nArtifacts are saved to disk. Do NOT call redundant read or check tools."
+        return "\n\n".join(results) + "\n\nArtifacts and memory are saved to disk. Do NOT call redundant read or check tools."
 
     tool_update_plan = tool_update_plans
+    tool_update_artifacts = tool_update_plans
 
     def tool_update_meal_plan(meal_entries: list[dict]) -> str:
         return tool_update_plans(meal_entries=meal_entries)
