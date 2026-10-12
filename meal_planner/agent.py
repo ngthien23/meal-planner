@@ -102,7 +102,7 @@ COMMUNICATION POLICY:
 5. MACRONUTRIENT NOTATION (NO GRAMS FOR P/C/F): Always express macronutrients by attaching the letter directly to the number (e.g. 40P, 50C, 15F). Never write grams or 'g' for protein, carbs, or fat. Food portion weights use standard units (g, kg), and energy uses kcal.
 6. TOOL CALLING EFFICIENCY (NO REDUNDANT READS OR CHECKS):
    - SINGLE PASS PER UPDATE: A single meal plan update request must execute strictly ONE pass:
-     1. Targeted read (optional): If you need to view existing meal slots for a date before modifying, call tool_get_meal_plan(target_date="YYYY-MM-DD") ONLY for that date. NEVER read the full 7-day meal plan to update a single meal.
+     1. Read full context (optional): If you need context on the current meal plan, call tool_get_meal_plan() once to view the full weekly plan.
      2. Update: Call tool_update_meal_plan(meal_entries).
      3. Verification: Call tool_check_meal_plan() at most ONCE after tool_update_meal_plan.
    - PRE-CHECK BAN: NEVER call tool_check_meal_plan BEFORE updating a meal plan. Checking before modifying is redundant and wastes tokens.
@@ -173,7 +173,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         """Reads the active weekly meal plan CSV.
         
         EFFICIENCY RULES:
-        - When inspecting or modifying a specific meal, ALWAYS specify target_date='YYYY-MM-DD' to load only that date and save tokens.
+        - Call this tool once at the start of planning if you need full weekly plan context.
         - NEVER call this tool after calling tool_update_meal_plan; updates are already saved to disk.
         
         Args:
