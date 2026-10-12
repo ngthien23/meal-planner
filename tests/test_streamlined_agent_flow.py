@@ -188,16 +188,18 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("summary_only=True", prompt)
 
     def test_prompt_instructs_no_redundant_reads_or_prechecks_for_meal_plan(self):
-        """System prompt must enforce single pass, pre-check ban, and no post-update reads for meal plans."""
+        """System prompt must enforce injected weekly context, direct update, and automatic validation."""
         prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
-        self.assertIn("SINGLE PASS PER UPDATE", prompt)
-        self.assertIn("PRE-CHECK BAN: NEVER call tool_check_meal_plan BEFORE updating", prompt)
+        self.assertIn("Active Weekly Meal Plan (Full Context):", prompt)
+        self.assertIn("FULL WEEK CONTEXT INJECTED", prompt)
+        self.assertIn("DIRECT UPDATE", prompt)
+        self.assertIn("AUTOMATIC PLAN VALIDATION", prompt)
+        self.assertIn("NO PRE-CHECKS: NEVER call tool_check_meal_plan before updating", prompt)
         self.assertIn("NO POST-UPDATE READS", prompt)
         self.assertIn("Do NOT call tool_get_meal_plan", prompt)
-        self.assertIn("SINGLE VALIDATION: Run tool_check_meal_plan at most ONCE", prompt)
 
     def test_tool_update_meal_plan_explicitly_mentions_disk_persistence_and_no_reread(self):
-        """tool_update_meal_plan output informs LLM that file is on disk and not to re-read."""
+        """tool_update_meal_plan output informs LLM that file is on disk, does not need re-read, and includes automatic validation."""
         update_fn = self.tools["tool_update_meal_plan"]
         msg = update_fn([{
             "Date": "2026-10-10",
@@ -211,6 +213,7 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         }])
         self.assertIn("Artifact is saved to disk", msg)
         self.assertIn("Do NOT call tool_get_meal_plan", msg)
+        self.assertIn("[AUTOMATIC PLAN VALIDATION]:", msg)
 
     def test_tool_check_meal_plan_caches_unchanged_plan_to_prevent_duplicate_checks(self):
         """Repeated consecutive calls to tool_check_meal_plan without modifying plan return cached completion note."""
