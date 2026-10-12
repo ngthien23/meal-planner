@@ -187,6 +187,42 @@ class TestStreamlinedAgentFlow(unittest.TestCase):
         self.assertIn("NEVER call tool_check_meal_plan when updating groceries", prompt)
         self.assertIn("summary_only=True", prompt)
 
+    def test_prompt_instructs_no_redundant_reads_or_prechecks_for_meal_plan(self):
+        """System prompt must enforce single pass, pre-check ban, and no post-update reads for meal plans."""
+        prompt = build_system_instruction("Europe/Brussels", data_dir=self.test_dir)
+        self.assertIn("SINGLE PASS PER UPDATE", prompt)
+        self.assertIn("PRE-CHECK BAN: NEVER call tool_check_meal_plan BEFORE updating", prompt)
+        self.assertIn("NO POST-UPDATE READS", prompt)
+        self.assertIn("Do NOT call tool_get_meal_plan", prompt)
+        self.assertIn("SINGLE VALIDATION: Run tool_check_meal_plan at most ONCE", prompt)
+
+    def test_tool_update_meal_plan_explicitly_mentions_disk_persistence_and_no_reread(self):
+        """tool_update_meal_plan output informs LLM that file is on disk and not to re-read."""
+        update_fn = self.tools["tool_update_meal_plan"]
+        msg = update_fn([{
+            "Date": "2026-10-10",
+            "Meal": "Lunch",
+            "Recipe": "Quick Chicken",
+            "Ingredient": "200g Chicken",
+            "P": 40,
+            "C": 0,
+            "F": 5,
+            "Calories": 220
+        }])
+        self.assertIn("Artifact is saved to disk", msg)
+        self.assertIn("Do NOT call tool_get_meal_plan", msg)
+
+    def test_tool_check_meal_plan_caches_unchanged_plan_to_prevent_duplicate_checks(self):
+        """Repeated consecutive calls to tool_check_meal_plan without modifying plan return cached completion note."""
+        check_fn = self.tools["tool_check_meal_plan"]
+        first_call = check_fn(target_calories=1345, target_p=110, target_c=125, target_f=45)
+        self.assertIn("[ACCEPTED]", first_call)
+
+        second_call = check_fn(target_calories=1345, target_p=110, target_c=125, target_f=45)
+        self.assertIn("[ACCEPTED]", second_call)
+        self.assertIn("was already verified and has not changed", second_call)
+        self.assertIn("Do NOT call tool_check_meal_plan again", second_call)
+
 
 if __name__ == "__main__":
     unittest.main()

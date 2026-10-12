@@ -703,7 +703,7 @@ def check_meal_plan_csv(
             f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}P | {int(planned_c)}C | {int(planned_f)}F\n"
             f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}P | {int(target_c)}C | {int(target_f)}F\n"
             f"{carried_str}"
-            f"Everything checked. The meal plan is approved."
+            f"Everything checked. The meal plan is approved. Validation is complete (do NOT call tool_check_meal_plan or tool_get_meal_plan again)."
         )
         return {
             "status": "ACCEPTED",

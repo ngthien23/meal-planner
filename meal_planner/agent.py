@@ -101,7 +101,13 @@ COMMUNICATION POLICY:
 4. NO RIGID LOCAL NUTRITION OR PRICE BOOKKEEPING: Do not maintain local tracking tables for prices or nutrition facts; rely on reasoning and search.
 5. MACRONUTRIENT NOTATION (NO GRAMS FOR P/C/F): Always express macronutrients by attaching the letter directly to the number (e.g. 40P, 50C, 15F). Never write grams or 'g' for protein, carbs, or fat. Food portion weights use standard units (g, kg), and energy uses kcal.
 6. TOOL CALLING EFFICIENCY (NO REDUNDANT READS OR CHECKS):
-   - When an update tool succeeds (e.g. tool_update_grocery_list), the artifact is already updated. Do NOT call tool_get_grocery_list or re-read the file unless the user explicitly requested to view it.
+   - SINGLE PASS PER UPDATE: A single meal plan update request must execute strictly ONE pass:
+     1. Targeted read (optional): If you need to view existing meal slots for a date before modifying, call tool_get_meal_plan(target_date="YYYY-MM-DD") ONLY for that date. NEVER read the full 7-day meal plan to update a single meal.
+     2. Update: Call tool_update_meal_plan(meal_entries).
+     3. Verification: Call tool_check_meal_plan() at most ONCE after tool_update_meal_plan.
+   - PRE-CHECK BAN: NEVER call tool_check_meal_plan BEFORE updating a meal plan. Checking before modifying is redundant and wastes tokens.
+   - NO POST-UPDATE READS: When an update tool succeeds (tool_update_meal_plan, tool_update_grocery_list, tool_update_batch_cook), the artifact is already updated and saved on disk. Do NOT call tool_get_meal_plan, and Do NOT call tool_get_grocery_list or re-read the file unless the user explicitly requested to view it.
+   - SINGLE VALIDATION: Run tool_check_meal_plan at most ONCE after tool_update_meal_plan. Once tool_check_meal_plan returns [ACCEPTED], validation is complete. NEVER call tool_check_meal_plan again in the same request.
    - If you only need to check if a grocery list exists or view run names, call tool_get_grocery_list(summary_only=True) to save tokens.
    - tool_check_meal_plan is EXCLUSIVELY for validating weekly meal plans (meal_plan.csv). NEVER call tool_check_meal_plan when updating groceries or batch cooking.
 
@@ -139,7 +145,9 @@ PLANNING PRINCIPLES:
 6. BATCH COOK PLANNING:
    - Persist batch dishes to {active_batch_csv} using tool_update_batch_cook. Specify Dish (name only), Main_Protein (protein name and weight), and Meals (number of meals covered).
 7. PLAN VERIFICATION:
-   - Always run tool_check_meal_plan() after creating or modifying a meal plan (meal_plan.csv).
+   - Run tool_check_meal_plan() at most ONCE after creating or modifying a meal plan (meal_plan.csv).
+   - NEVER call tool_check_meal_plan() before modifying a meal plan.
+   - Once tool_check_meal_plan() returns [ACCEPTED], validation is complete. Do NOT re-check or re-read the meal plan.
    - NEVER call tool_check_meal_plan() for grocery list or batch cook updates; it is strictly a nutritional macro validator for weekly meal plans.
 """
 
@@ -164,6 +172,10 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
     def tool_get_meal_plan(target_date: Optional[str] = None) -> str:
         """Reads the active weekly meal plan CSV.
         
+        EFFICIENCY RULES:
+        - When inspecting or modifying a specific meal, ALWAYS specify target_date='YYYY-MM-DD' to load only that date and save tokens.
+        - NEVER call this tool after calling tool_update_meal_plan; updates are already saved to disk.
+        
         Args:
             target_date: Optional 'YYYY-MM-DD' date filter to view meals for a specific day.
         """
@@ -179,6 +191,8 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         """Updates, replaces, or adds meal slots directly in the active weekly meal plan CSV.
         
         Use this tool to persist planned dishes, craving substitutions, or stock exhaustion meals.
+        Calling this tool saves the CSV directly to disk. Do NOT call tool_get_meal_plan afterwards.
+        Validate the updated plan at most once via tool_check_meal_plan().
         
         Args:
             meal_entries: List of meal dicts. Each must include 'Date' and 'Meal' ('Breakfast', 'Lunch', 'Dinner', 'Snack'),
@@ -188,7 +202,7 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
                                      'P': 55, 'C': 45, 'F': 18, 'Calories': 560}]
         """
         res = update_meal_plan_csv(data_dir, meal_entries)
-        return res.get("message", "Meal plan updated.")
+        return f"{res.get('message', 'Meal plan updated.')} Artifact is saved to disk. Do NOT call tool_get_meal_plan."
 
     def tool_get_grocery_list(run_name: Optional[str] = None, summary_only: bool = False) -> str:
         """Reads the active split grocery list CSV.
@@ -265,6 +279,8 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         res = update_batch_cook_csv(data_dir, dishes)
         return res.get("message", "Batch cook instructions updated.")
 
+    _last_check_cache: dict[tuple, str] = {}
+
     def tool_check_meal_plan(
         target_calories: Optional[float] = None,
         target_p: Optional[float] = None,
@@ -277,8 +293,11 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
         the nutritional goals, including carried deficits or surpluses from last week.
         Returns [ACCEPTED] if approved, or [NEEDS FIXING] with discrepancies to fix.
         
-        IMPORTANT: This tool is EXCLUSIVELY for meal plan (meal_plan.csv) validation.
-        NEVER call this tool when updating groceries or batch cooking.
+        EFFICIENCY RULES:
+        - Call this tool at most ONCE per update request, strictly AFTER tool_update_meal_plan.
+        - NEVER call this tool BEFORE modifying a meal plan.
+        - Once this tool returns [ACCEPTED], validation is complete. Do NOT call this tool again and do NOT call tool_get_meal_plan.
+        - NEVER call this tool when updating groceries or batch cooking.
         
         Args:
             target_calories: Optional explicit weekly calorie goal. If omitted, derived from memory.
@@ -286,6 +305,15 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             target_c: Optional explicit weekly carb goal (g). If omitted, derived from memory.
             target_f: Optional explicit weekly fat goal (g). If omitted, derived from memory.
         """
+        prefix = get_current_cycle_prefix(user_timezone="Europe/Brussels")
+        plan_path = os.path.join(data_dir, "plans", f"{prefix}_meal_plan.csv")
+        mtime = os.path.getmtime(plan_path) if os.path.exists(plan_path) else None
+        cache_key = (plan_path, mtime, target_calories, target_p, target_c, target_f)
+
+        if mtime is not None and cache_key in _last_check_cache:
+            cached_res = _last_check_cache[cache_key]
+            return f"{cached_res}\n(Note: Meal plan was already verified and has not changed. Validation is complete. Do NOT call tool_check_meal_plan again.)"
+
         res = check_meal_plan_csv(
             data_dir,
             target_weekly_calories=target_calories,
@@ -293,6 +321,9 @@ def get_agent_tools(data_dir: str = "data") -> list[Callable]:
             target_weekly_c=target_c,
             target_weekly_f=target_f
         )
+        if mtime is not None and res.get("accepted"):
+            _last_check_cache[cache_key] = res["message"]
+
         return res["message"]
 
     return [
