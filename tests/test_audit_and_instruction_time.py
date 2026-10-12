@@ -97,22 +97,26 @@ class TestAuditAndInstructionTime(unittest.TestCase):
         # 1. Test ensure_api_key with no key in env
         orig_key = os.environ.pop("GEMINI_API_KEY", None)
         orig_google = os.environ.pop("GOOGLE_API_KEY", None)
+        orig_keys = os.environ.pop("GEMINI_API_KEYS", None)
         test_env_file = os.path.join(self.test_dir, ".env")
         try:
             with patch("meal_planner.cli.ENV_PATH", test_env_file):
                 ensure_api_key(input_fn=capture_input)
-                self.assertEqual(prompts_seen[-1], "Enter Gemini API key: ")
+                self.assertEqual(prompts_seen[0], "Enter Gemini API key: ")
 
                 # 2. Test quick_setup_wizard with force=True (already has key)
                 quick_setup_wizard(data_dir=self.test_dir, input_fn=capture_input, force=True)
-                self.assertEqual(prompts_seen[-1], "Enter Gemini API key: ")
-                self.assertNotIn("keep current", prompts_seen[-1])
-                self.assertNotIn("***", prompts_seen[-1])
+                self.assertIn("Enter Gemini API key: ", prompts_seen)
+                for p in prompts_seen:
+                    self.assertNotIn("keep current", p)
+                    self.assertNotIn("***", p)
         finally:
             if orig_key:
                 os.environ["GEMINI_API_KEY"] = orig_key
             if orig_google:
                 os.environ["GOOGLE_API_KEY"] = orig_google
+            if orig_keys:
+                os.environ["GEMINI_API_KEYS"] = orig_keys
 
 
 if __name__ == "__main__":

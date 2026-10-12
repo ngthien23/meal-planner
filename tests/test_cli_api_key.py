@@ -12,10 +12,13 @@ class TestCliApiKey(unittest.TestCase):
         self.env_patcher.start()
         self.orig_key = os.environ.get("GEMINI_API_KEY")
         self.orig_google_key = os.environ.get("GOOGLE_API_KEY")
+        self.orig_keys = os.environ.get("GEMINI_API_KEYS")
         if "GEMINI_API_KEY" in os.environ:
             del os.environ["GEMINI_API_KEY"]
         if "GOOGLE_API_KEY" in os.environ:
             del os.environ["GOOGLE_API_KEY"]
+        if "GEMINI_API_KEYS" in os.environ:
+            del os.environ["GEMINI_API_KEYS"]
 
     def tearDown(self):
         self.env_patcher.stop()
@@ -30,6 +33,11 @@ class TestCliApiKey(unittest.TestCase):
             os.environ["GOOGLE_API_KEY"] = self.orig_google_key
         elif "GOOGLE_API_KEY" in os.environ:
             del os.environ["GOOGLE_API_KEY"]
+
+        if self.orig_keys:
+            os.environ["GEMINI_API_KEYS"] = self.orig_keys
+        elif "GEMINI_API_KEYS" in os.environ:
+            del os.environ["GEMINI_API_KEYS"]
 
     def test_ensure_api_key_existing_env(self):
         os.environ["GEMINI_API_KEY"] = "test-existing-key"

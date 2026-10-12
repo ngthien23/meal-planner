@@ -313,14 +313,18 @@ def get_root_agent(data_dir: str = "data"):
     except ImportError:
         return None
 
+    from meal_planner.key_manager import RotatingKeyGemini, key_manager
+
     model_name = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
     user_tz = "Europe/Brussels"
     tools = get_agent_tools(data_dir)
     sys_instruction = build_system_instruction(user_tz, data_dir=data_dir)
 
+    model_instance = RotatingKeyGemini(model=model_name, key_mgr=key_manager)
+
     return Agent(
         name="meal_planner",
-        model=model_name,
+        model=model_instance,
         description="AI Meal & Grocery Planner Agent with multimodal receipt and meal analysis.",
         instruction=sys_instruction,
         tools=tools,

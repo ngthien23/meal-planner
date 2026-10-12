@@ -44,80 +44,109 @@ def _open_browser_delayed(url: str, delay: float = 1.5) -> None:
 
 def save_env_api_key(api_key: str, env_path: str = ENV_PATH) -> None:
     """Saves or updates GEMINI_API_KEY and GOOGLE_API_KEY in the .env file and process environment."""
-    os.environ["GEMINI_API_KEY"] = api_key
-    os.environ["GOOGLE_API_KEY"] = api_key
+    from meal_planner.key_manager import save_api_keys
     env_file = getattr(sys.modules[__name__], "ENV_PATH", env_path)
-    lines = []
-    if os.path.exists(env_file):
-        with open(env_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-    new_lines = []
-    found_gemini = False
-    found_google = False
-    for line in lines:
-        if line.startswith("GEMINI_API_KEY="):
-            new_lines.append(f"GEMINI_API_KEY={api_key}\n")
-            found_gemini = True
-        elif line.startswith("GOOGLE_API_KEY="):
-            new_lines.append(f"GOOGLE_API_KEY={api_key}\n")
-            found_google = True
-        else:
-            new_lines.append(line)
-
-    if not found_gemini:
-        new_lines.append(f"GEMINI_API_KEY={api_key}\n")
-    if not found_google:
-        new_lines.append(f"GOOGLE_API_KEY={api_key}\n")
-
-    with open(env_file, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+    save_api_keys([api_key], env_path=env_file)
 
 def ensure_api_key(input_fn=None) -> str:
-    """Checks for GEMINI_API_KEY or GOOGLE_API_KEY, prompts the user if missing, and optionally persists to .env."""
+    """Checks for configured Gemini API keys, prompts the user if missing, and optionally persists to .env."""
     if input_fn is None:
         input_fn = input
-    key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
-    if key:
-        os.environ["GEMINI_API_KEY"] = key
-        os.environ["GOOGLE_API_KEY"] = key
-        return key
+    from meal_planner.key_manager import get_api_keys, save_api_keys, key_manager
 
+    env_file = getattr(sys.modules[__name__], "ENV_PATH", ENV_PATH)
+    keys = get_api_keys(env_file)
+    if keys:
+        key_manager.set_keys(keys)
+        os.environ["GEMINI_API_KEY"] = keys[0]
+        os.environ["GOOGLE_API_KEY"] = keys[0]
+        return keys[0]
+
+    collected_keys: list[str] = []
     try:
-        entered = input_fn("Enter Gemini API key: ").strip()
-    except (KeyboardInterrupt, EOFError):
+        first = input_fn("Enter Gemini API key: ").strip()
+        if not first:
+            return ""
+        for sub in first.split(","):
+            sub_clean = sub.strip()
+            if sub_clean and sub_clean not in collected_keys:
+                collected_keys.append(sub_clean)
+
+        while True:
+            try:
+                next_input = input_fn("Enter another Gemini API key (press Enter when done): ").strip()
+            except (KeyboardInterrupt, EOFError, StopIteration, IndexError):
+                break
+            if not next_input:
+                break
+            if next_input in collected_keys:
+                break
+            for sub in next_input.split(","):
+                sub_clean = sub.strip()
+                if sub_clean and sub_clean not in collected_keys:
+                    collected_keys.append(sub_clean)
+    except (KeyboardInterrupt, EOFError, StopIteration, IndexError):
+        if not collected_keys:
+            return ""
+
+    if not collected_keys:
         return ""
 
-    if not entered:
-        return ""
-
-    os.environ["GEMINI_API_KEY"] = entered
-    os.environ["GOOGLE_API_KEY"] = entered
-    save_env_api_key(entered)
-    print("[OK] Saved API key.")
-    return entered
+    save_api_keys(collected_keys, env_path=env_file)
+    key_manager.set_keys(collected_keys)
+    if len(collected_keys) == 1:
+        print("[OK] Saved API key.")
+    else:
+        print(f"[OK] Saved {len(collected_keys)} API keys.")
+    return collected_keys[0]
 
 def quick_setup_wizard(
     data_dir: str = "data",
     input_fn=None,
     force: bool = False
 ) -> None:
-    """Quick setup wizard: prompts for API key if missing (or when force=True to edit/update)."""
+    """Quick setup wizard: prompts for API keys if missing (or when force=True to edit/update)."""
     if input_fn is None:
         input_fn = input
     data_dir = resolve_data_dir(data_dir)
 
-    current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
-    if not current_key or force:
+    from meal_planner.key_manager import get_api_keys, save_api_keys, key_manager
+
+    env_file = getattr(sys.modules[__name__], "ENV_PATH", ENV_PATH)
+    current_keys = get_api_keys(env_file)
+    if not current_keys or force:
+        collected_keys: list[str] = []
         try:
-            entered_key = input_fn("Enter Gemini API key: ").strip()
-            if entered_key:
-                save_env_api_key(entered_key)
-                os.environ["GEMINI_API_KEY"] = entered_key
-                os.environ["GOOGLE_API_KEY"] = entered_key
-                print("[OK] Saved API key.")
-        except (KeyboardInterrupt, EOFError):
+            first = input_fn("Enter Gemini API key: ").strip()
+            if first:
+                for sub in first.split(","):
+                    sub_clean = sub.strip()
+                    if sub_clean and sub_clean not in collected_keys:
+                        collected_keys.append(sub_clean)
+
+                while True:
+                    try:
+                        next_input = input_fn("Enter another Gemini API key (press Enter when done): ").strip()
+                    except (KeyboardInterrupt, EOFError, StopIteration, IndexError):
+                        break
+                    if not next_input:
+                        break
+                    if next_input in collected_keys:
+                        break
+                    for sub in next_input.split(","):
+                        sub_clean = sub.strip()
+                        if sub_clean and sub_clean not in collected_keys:
+                            collected_keys.append(sub_clean)
+        except (KeyboardInterrupt, EOFError, StopIteration, IndexError):
             pass
+
+        if collected_keys:
+            save_api_keys(collected_keys, env_path=env_file)
+            key_manager.set_keys(collected_keys)
+            if len(collected_keys) == 1:
+                print("[OK] Saved API key.")
+            else:
+                print(f"[OK] Saved {len(collected_keys)} API keys.")
 
 
 def run_interactive_cli(data_dir: str = "data") -> None:
@@ -150,6 +179,9 @@ def run_interactive_cli(data_dir: str = "data") -> None:
 
     # 2. Check and prompt for API key if missing
     api_key = ensure_api_key()
+    from meal_planner.key_manager import key_manager, is_retryable_api_error
+    if key_manager.total_keys() > 0:
+        print(f"[*] API Key Pool: {key_manager.total_keys()} key(s) loaded with auto-rotation fallback.")
     if not api_key:
         print("\nRunning in local deterministic mode.")
         print("Type /exit to quit.\n")
@@ -217,12 +249,32 @@ def run_interactive_cli(data_dir: str = "data") -> None:
             # Send to Gemini Chat session if active
             handled_by_gemini = False
             if chat:
-                try:
-                    response = chat.send_message(user_input)
-                    print(f"\nAgent > {response.text}\n")
-                    handled_by_gemini = True
-                except Exception as e:
-                    print(f"\n[!] Gemini API error ({e}). Falling back to local execution.\n")
+                max_retries = max(1, key_manager.total_keys())
+                attempts = 0
+                while attempts < max_retries:
+                    try:
+                        response = chat.send_message(user_input)
+                        print(f"\nAgent > {response.text}\n")
+                        handled_by_gemini = True
+                        break
+                    except Exception as e:
+                        if not is_retryable_api_error(e) or attempts >= max_retries - 1:
+                            print(f"\n[!] Gemini API error ({e}). Falling back to local execution.\n")
+                            break
+                        attempts += 1
+                        next_key = key_manager.rotate_key()
+                        print(f"\n[KeyManager] Rate limit / API error ({e}). Rotating to API key {attempts + 1}/{max_retries} and retrying...\n")
+                        try:
+                            client = genai.Client(api_key=next_key)
+                            chat_history = chat.get_history()
+                            config = types.GenerateContentConfig(
+                                system_instruction=sys_instruction,
+                                tools=tools,
+                                temperature=0.2
+                            )
+                            chat = client.chats.create(model=model_name, config=config, history=chat_history)
+                        except Exception as rebuild_err:
+                            print(f"[KeyManager] Could not rebuild chat with new key: {rebuild_err}")
 
             if not handled_by_gemini:
                 # Local fallback parser for key actions
@@ -258,9 +310,15 @@ def serve_adk_playground(
     data_dir = resolve_data_dir(data_dir)
 
     # 1. API key verification (only if missing)
-    current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
-    if not current_key:
+    from meal_planner.key_manager import get_api_keys, key_manager
+    env_file = getattr(sys.modules[__name__], "ENV_PATH", ENV_PATH)
+    keys = get_api_keys(env_file)
+    if not keys:
         ensure_api_key()
+        keys = get_api_keys(env_file)
+    key_manager.set_keys(keys)
+    if keys:
+        print(f"[*] API Key Pool: {len(keys)} key(s) loaded with auto-rotation fallback.")
 
     user_tz = "Europe/Brussels"
     try:
@@ -340,8 +398,10 @@ Options:
             data_dir = arg
 
     data_dir = resolve_data_dir(data_dir)
-    current_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
-    if is_setup or not current_key:
+    from meal_planner.key_manager import get_api_keys
+    env_file = getattr(sys.modules[__name__], "ENV_PATH", ENV_PATH)
+    keys = get_api_keys(env_file)
+    if is_setup or not keys:
         quick_setup_wizard(data_dir=data_dir, force=is_setup)
         if is_setup:
             print("\n[OK] Setup complete. Run 'meals' to launch the agent playground.")
