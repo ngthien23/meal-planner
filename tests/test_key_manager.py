@@ -168,6 +168,34 @@ class TestRotatingKeyGeminiExecution(unittest.IsolatedAsyncioTestCase):
                     pass
             self.assertIn("RESOURCE_EXHAUSTED", str(ctx.exception))
 
+    async def test_generate_content_async_switches_model_on_503_overload(self):
+        """generate_content_async switches to fallback model and rotates key when 503 unavailable occurs."""
+        km = KeyManager(["key-1", "key-2"])
+        model = RotatingKeyGemini(model="gemini-3.8-flash", key_mgr=km)
+
+        attempted_models = []
+
+        async def fake_gen(req, stream=False):
+            attempted_models.append(req.model)
+            if len(attempted_models) == 1:
+                # 503 high-demand error on primary model
+                raise Exception("503 UNAVAILABLE. {'error': {'message': 'This model is currently experiencing high demand.'}}")
+            # Fallback model succeeds
+            yield f"Success from {req.model}"
+
+        from google.adk.models.llm_request import LlmRequest
+        req = LlmRequest(model="gemini-3.8-flash")
+
+        with patch("google.adk.models.google_llm.Gemini.generate_content_async", side_effect=fake_gen):
+            responses = []
+            async for resp in model.generate_content_async(req):
+                responses.append(resp)
+
+        self.assertEqual(attempted_models[0], "gemini-3.8-flash")
+        self.assertIn(attempted_models[1], ["gemini-3-flash-preview", "gemini-flash-latest"])
+        self.assertIn("Success from", responses[0])
+        self.assertEqual(km.get_current_key(), "key-2")
+
 
 if __name__ == "__main__":
     unittest.main()

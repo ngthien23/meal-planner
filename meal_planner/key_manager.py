@@ -1,6 +1,7 @@
 import os
 import sys
 import copy
+import asyncio
 import logging
 from typing import Optional, AsyncGenerator
 
@@ -11,20 +12,25 @@ ENV_PATH = os.path.join(REPO_ROOT, ".env")
 
 
 def is_retryable_api_error(e: Exception) -> bool:
-    """Returns True if the exception indicates rate limit, quota exhaustion, or an invalid/expired API key."""
+    """Returns True if the exception indicates rate limit, quota exhaustion, network issue, or an invalid/expired API key."""
     code = getattr(e, "code", None) or getattr(e, "status_code", None)
-    if code in (400, 403, 429, 503):
+    if code in (400, 403, 429, 500, 502, 503, 504):
         return True
 
     err_str = str(e).upper()
+    err_type = type(e).__name__.upper()
+    combined = f"{err_type}: {err_str}"
     retryable_patterns = [
         "429", "RESOURCE_EXHAUSTED", "RATE_LIMIT", "RATE LIMIT",
         "QUOTA", "EXHAUSTED", "TOO MANY REQUESTS",
         "400", "API_KEY_INVALID", "INVALID_ARGUMENT", "INVALID API KEY",
         "UNAUTHENTICATED", "PERMISSION_DENIED", "403",
-        "503", "UNAVAILABLE", "OVERLOADED"
+        "500", "502", "503", "504", "UNAVAILABLE", "OVERLOADED",
+        "HIGH DEMAND", "TEMPORARY", "SERVERERROR",
+        "CONNECTERROR", "CONNECTIONERROR", "TIMEOUT", "SOCKET",
+        "REMOTEPROTOCOLERROR", "READTIMEOUT", "POOLTIMEOUT"
     ]
-    return any(p in err_str for p in retryable_patterns)
+    return any(p in combined for p in retryable_patterns)
 
 
 def get_api_keys(env_path: Optional[str] = None) -> list[str]:
@@ -237,18 +243,30 @@ try:
         async def generate_content_async(
             self, llm_request: LlmRequest, stream: bool = False
         ) -> AsyncGenerator[LlmResponse, None]:
-            max_attempts = max(1, self.key_mgr.total_keys())
+            total_keys = max(1, self.key_mgr.total_keys())
+            max_attempts = max(3, total_keys * 2)
             attempts = 0
+
+            requested_model = llm_request.model or self.model
+            candidate_models = [requested_model]
+            for fb in ["gemini-3-flash-preview", "gemini-flash-latest"]:
+                if fb not in candidate_models:
+                    candidate_models.append(fb)
+            model_idx = 0
 
             while attempts < max_attempts:
                 curr_key = self.key_mgr.get_current_key()
                 self._set_active_key(curr_key)
+                current_model = candidate_models[model_idx % len(candidate_models)]
+
                 yielded_any = False
                 req_copy = (
                     llm_request.model_copy(deep=True)
                     if hasattr(llm_request, "model_copy")
                     else copy.deepcopy(llm_request)
                 )
+                req_copy.model = current_model
+
                 try:
                     async for resp in super().generate_content_async(req_copy, stream=stream):
                         yielded_any = True
@@ -259,28 +277,53 @@ try:
                         raise e
 
                     attempts += 1
+                    err_str = str(e).upper()
+                    if ("503" in err_str or "UNAVAILABLE" in err_str or attempts % total_keys == 0) and len(candidate_models) > 1:
+                        model_idx += 1
+                        next_model = candidate_models[model_idx % len(candidate_models)]
+                    else:
+                        next_model = current_model
+
                     next_key = self.key_mgr.rotate_key()
+                    delay = min(2.0, 0.4 * attempts)
                     logger.warning(
-                        f"[KeyManager] API error ({type(e).__name__}: {e}). "
-                        f"Rotating to API key {attempts + 1}/{max_attempts} and retrying turn..."
+                        f"[KeyManager] Rate limit / API error ({type(e).__name__}: {e}). "
+                        f"Rotating to API key {self.key_mgr.current_index + 1}/{total_keys} "
+                        f"(model: {next_model}) and retrying turn in {delay:.1f}s (attempt {attempts + 1}/{max_attempts})..."
                     )
                     print(
                         f"\n[KeyManager] Rate limit or API error ({e}). "
-                        f"Rotating to key {attempts + 1}/{max_attempts} and retrying in the same session...\n"
+                        f"Rotating to key {self.key_mgr.current_index + 1}/{total_keys} "
+                        f"(model: {next_model}) and retrying in the same session (attempt {attempts + 1}/{max_attempts})...\n"
                     )
+                    if delay > 0:
+                        await asyncio.sleep(delay)
 
         @contextlib.asynccontextmanager
         async def connect(self, llm_request: LlmRequest):
-            max_attempts = max(1, self.key_mgr.total_keys())
+            total_keys = max(1, self.key_mgr.total_keys())
+            max_attempts = max(3, total_keys * 2)
             attempts = 0
+
+            requested_model = llm_request.model or self.model
+            candidate_models = [requested_model]
+            for fb in ["gemini-3-flash-preview", "gemini-flash-latest"]:
+                if fb not in candidate_models:
+                    candidate_models.append(fb)
+            model_idx = 0
+
             while attempts < max_attempts:
                 curr_key = self.key_mgr.get_current_key()
                 self._set_active_key(curr_key)
+                current_model = candidate_models[model_idx % len(candidate_models)]
+
                 req_copy = (
                     llm_request.model_copy(deep=True)
                     if hasattr(llm_request, "model_copy")
                     else copy.deepcopy(llm_request)
                 )
+                req_copy.model = current_model
+
                 try:
                     async with super().connect(req_copy) as conn:
                         yield conn
@@ -289,7 +332,13 @@ try:
                     if not is_retryable_api_error(e) or attempts >= max_attempts - 1:
                         raise e
                     attempts += 1
+                    err_str = str(e).upper()
+                    if ("503" in err_str or "UNAVAILABLE" in err_str or attempts % total_keys == 0) and len(candidate_models) > 1:
+                        model_idx += 1
                     self.key_mgr.rotate_key()
+                    delay = min(2.0, 0.4 * attempts)
+                    if delay > 0:
+                        await asyncio.sleep(delay)
 
 except ImportError:
     class RotatingKeyGemini:

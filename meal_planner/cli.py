@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import threading
 import webbrowser
 import subprocess
@@ -254,8 +255,15 @@ def run_interactive_cli(data_dir: str = "data") -> None:
             # Send to Gemini Chat session if active
             handled_by_gemini = False
             if chat:
-                max_retries = max(1, key_manager.total_keys())
+                total_keys = max(1, key_manager.total_keys())
+                max_retries = max(3, total_keys * 2)
+                candidate_models = [model_name]
+                for fb in ["gemini-3-flash-preview", "gemini-flash-latest"]:
+                    if fb not in candidate_models:
+                        candidate_models.append(fb)
+                model_idx = 0
                 attempts = 0
+                current_model = candidate_models[0]
                 while attempts < max_retries:
                     try:
                         response = chat.send_message(user_input)
@@ -267,8 +275,15 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                             print(f"\n[!] Gemini API error ({e}). Falling back to local execution.\n")
                             break
                         attempts += 1
+                        err_str = str(e).upper()
+                        if ("503" in err_str or "UNAVAILABLE" in err_str or attempts % total_keys == 0) and len(candidate_models) > 1:
+                            model_idx += 1
+                            current_model = candidate_models[model_idx % len(candidate_models)]
                         next_key = key_manager.rotate_key()
-                        print(f"\n[KeyManager] Rate limit / API error ({e}). Rotating to API key {attempts + 1}/{max_retries} and retrying...\n")
+                        delay = min(2.0, 0.4 * attempts)
+                        print(f"\n[KeyManager] Rate limit / API error ({e}). Rotating to API key {key_manager.current_index + 1}/{total_keys} (model: {current_model}) and retrying in {delay:.1f}s (attempt {attempts + 1}/{max_retries})...\n")
+                        if delay > 0:
+                            time.sleep(delay)
                         try:
                             client = genai.Client(api_key=next_key)
                             chat_history = chat.get_history()
@@ -277,7 +292,7 @@ def run_interactive_cli(data_dir: str = "data") -> None:
                                 tools=tools,
                                 temperature=0.2
                             )
-                            chat = client.chats.create(model=model_name, config=config, history=chat_history)
+                            chat = client.chats.create(model=current_model, config=config, history=chat_history)
                         except Exception as rebuild_err:
                             print(f"[KeyManager] Could not rebuild chat with new key: {rebuild_err}")
 
@@ -344,6 +359,9 @@ def serve_adk_playground(
         keys = get_api_keys(env_file)
     key_manager.set_keys(keys)
     if keys:
+        os.environ["GEMINI_API_KEYS"] = ",".join(keys)
+        os.environ["GEMINI_API_KEY"] = keys[0]
+        os.environ["GOOGLE_API_KEY"] = keys[0]
         print(f"[*] API Key Pool: {len(keys)} key(s) loaded with auto-rotation fallback.")
 
     user_tz = "Europe/Brussels"
