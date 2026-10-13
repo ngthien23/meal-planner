@@ -163,21 +163,11 @@ class MemoryManager:
             f"{int(round(target_cal))} kcal / {int(round(target_p))}g P target)"
         )
 
-        found_idx = None
-        new_notes = []
-        for i, n in enumerate(existing):
-            if date_pattern.search(n):
-                found_idx = i
-            else:
-                new_notes.append(n)
+        filtered_notes = [n for n in existing if not date_pattern.search(n)]
 
         if is_deviating:
-            if found_idx is not None:
-                existing[found_idx] = note_content
-                self._write_notes(self.weekly_path, existing)
-            else:
-                existing.append(note_content)
-                self._write_notes(self.weekly_path, existing)
+            filtered_notes.append(note_content)
+            self._write_notes(self.weekly_path, filtered_notes)
             return {
                 "status": "recorded",
                 "deviating": True,
@@ -187,8 +177,8 @@ class MemoryManager:
                 "note": note_content
             }
         else:
-            if found_idx is not None:
-                self._write_notes(self.weekly_path, new_notes)
+            if len(filtered_notes) != len(existing):
+                self._write_notes(self.weekly_path, filtered_notes)
             return {
                 "status": "cleared",
                 "deviating": False,
@@ -205,7 +195,8 @@ class MemoryManager:
         daily_cal_target: float = 2500.0,
         daily_p_target: float = 150.0,
         cal_threshold: float = 0.15,
-        p_threshold: float = 0.10
+        p_threshold: float = 0.10,
+        cycle_prefix: Optional[str] = None
     ) -> dict:
         """Rolls over short-term memory to a new week, carrying substantial net diffs.
         
@@ -223,7 +214,7 @@ class MemoryManager:
         if is_substantial:
             c_int = int(round(net_cal))
             p_int = int(round(net_p))
-            carried_note = f"[Carried from last week] Net weekly deviation: {c_int:+d} kcal, {p_int:+d}P carried forward."
+            carried_note = f"[Carried from last week] Net weekly deviation: {c_int:+d} kcal, {p_int:+d}g P carried forward."
             self._write_notes(self.weekly_path, [carried_note])
             return {
                 "carried": True,
@@ -231,6 +222,9 @@ class MemoryManager:
                 "net_cal": c_int,
                 "net_p": p_int
             }
+
+        if cycle_prefix:
+            self._write_notes(self.weekly_path, [f"[Cycle {cycle_prefix}] Week initialized."])
 
         return {
             "carried": False,

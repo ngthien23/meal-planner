@@ -133,7 +133,7 @@ class TestMemoryDailyDeviationAndRollover(unittest.TestCase):
 
         notes = self.mgr.get_context()["weekly"]
         self.assertEqual(len(notes), 1)
-        self.assertIn("[Carried from last week] Net weekly deviation: -500 kcal, +20P carried forward.", notes[0])
+        self.assertIn("[Carried from last week] Net weekly deviation: -500 kcal, +20g P carried forward.", notes[0])
 
     def test_rollover_weekly_memory_not_substantial(self):
         self.mgr.add_note("Ate lunch at 1pm", tier="weekly")
@@ -287,7 +287,7 @@ class TestStartDateChangeAndWeekRollover(unittest.TestCase):
         # weekly.md must have the carried deviation note from plan 1
         notes = self.mgr.get_context()["weekly"]
         self.assertEqual(len(notes), 1)
-        self.assertIn("[Carried from last week] Net weekly deviation: -3500 kcal, -210P carried forward.", notes[0])
+        self.assertIn("[Carried from last week] Net weekly deviation: -3500 kcal, -210g P carried forward.", notes[0])
 
         # check_meal_plan_csv on plan 2 must incorporate the carried deficit into the target
         res = check_meal_plan_csv(self.test_dir)
@@ -354,7 +354,79 @@ class TestStartDateChangeAndWeekRollover(unittest.TestCase):
 
         notes = self.mgr.get_context()["weekly"]
         self.assertEqual(len(notes), 1)
-        self.assertIn("[Carried from last week] Net weekly deviation: -1000 kcal, -50P carried forward.", notes[0])
+        self.assertIn("[Carried from last week] Net weekly deviation: -1000 kcal, -50g P carried forward.", notes[0])
+
+    def test_update_meal_plan_mid_week_update_preserves_other_days(self):
+        """CRITICAL: Updating a single mid-week meal must NOT wipe the rest of the meal plan!"""
+        from meal_planner.tools.artifacts import update_meal_plan_csv, get_meal_plan_csv
+
+        # 7-day plan: 2026-10-10 to 2026-10-16
+        plan = []
+        for i in range(10, 17):
+            plan.append({
+                "Date": f"2026-10-{i}",
+                "Meal": "Dinner",
+                "Recipe": "Chicken and Rice",
+                "Ingredient": "Chicken",
+                "P": 150,
+                "C": 200,
+                "F": 50,
+                "Calories": 2500,
+            })
+        update_meal_plan_csv(self.test_dir, plan)
+
+        # Now update ONLY Wednesday (2026-10-14) dinner
+        update_meal_plan_csv(self.test_dir, [{
+            "Date": "2026-10-14",
+            "Meal": "Dinner",
+            "Recipe": "Salmon",
+            "Ingredient": "Salmon",
+            "P": 140,
+            "C": 180,
+            "F": 60,
+            "Calories": 2400,
+        }])
+
+        # Verify ALL 7 days are still present!
+        rows = get_meal_plan_csv(self.test_dir)
+        dates_present = {r["Date"] for r in rows}
+        self.assertEqual(len(dates_present), 7, f"Expected 7 days, but got: {dates_present}")
+        wed_row = [r for r in rows if r["Date"] == "2026-10-14"][0]
+        self.assertEqual(wed_row["Recipe"], "Salmon")
+
+    def test_check_and_apply_week_rollover_does_not_wipe_weekly_memory_repeatedly_when_no_deviation(self):
+        """CRITICAL: If prior week has no substantial deviation, do not keep wiping weekly.md on every turn!"""
+        from meal_planner.tools.artifacts import update_meal_plan_csv, check_and_apply_week_rollover
+
+        # Older cycle 261010 has NO deviation (2500 kcal, 150g P)
+        plan_old = [{
+            "Date": "2026-10-10",
+            "Meal": "Lunch",
+            "Recipe": "Meal",
+            "Ingredient": "Food",
+            "P": 150,
+            "C": 200,
+            "F": 50,
+            "Calories": 2500,
+        }]
+        update_meal_plan_csv(self.test_dir, plan_old, prefix="261010")
+
+        # First call for new cycle 261017: rolls over (no carried deviation)
+        res1 = check_and_apply_week_rollover(self.test_dir, current_prefix="261017")
+        self.assertTrue(res1["rolled_over"])
+        self.assertFalse(res1["carried"])
+
+        # User adds a note to short-term memory during chat
+        self.mgr.add_note("Bought 1kg chicken breast on sale", tier="weekly")
+        self.assertEqual(len(self.mgr.get_context()["weekly"]), 2)
+
+        # Next turn in the same chat: check_and_apply_week_rollover is called again
+        res2 = check_and_apply_week_rollover(self.test_dir, current_prefix="261017")
+        self.assertFalse(res2["rolled_over"], "Should not roll over again for the same cycle!")
+
+        # Short term memory note must NOT be wiped!
+        notes = self.mgr.get_context()["weekly"]
+        self.assertTrue(any("Bought 1kg chicken breast" in n for n in notes), "Short-term note was erroneously wiped!")
 
 
 if __name__ == "__main__":

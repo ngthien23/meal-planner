@@ -18,6 +18,12 @@ __all__ = [
     "check_and_apply_week_rollover"
 ]
 
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    try:
+        return float(val or 0.0)
+    except (ValueError, TypeError):
+        return default
+
 DAY_NAME_MAP = {
     "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
     "friday": 4, "saturday": 5, "sunday": 6
@@ -133,12 +139,12 @@ def update_meal_plan_csv(
     if existing_dates and new_dates:
         min_existing = min(existing_dates)
         min_new = min(new_dates)
-        if min_new != min_existing:
+        if new_dates.isdisjoint(existing_dates) and min_new > min_existing:
             from meal_planner.tools.memory import MemoryManager
             mem_mgr = MemoryManager(data_dir)
             daily_calories, daily_p, _, _ = _get_baseline_daily_targets(mem_mgr)
-            prev_cal = sum(float(r.get("Calories", 0) or 0) for r in existing_rows)
-            prev_p = sum(float(r.get("P", 0) or 0) for r in existing_rows)
+            prev_cal = sum(_safe_float(r.get("Calories", 0)) for r in existing_rows)
+            prev_p = sum(_safe_float(r.get("P", 0)) for r in existing_rows)
             prev_days = len(existing_dates)
             net_cal = prev_cal - (daily_calories * prev_days)
             net_p = prev_p - (daily_p * prev_days)
@@ -574,8 +580,12 @@ def check_and_apply_week_rollover(
 
     mem_mgr = MemoryManager(data_dir)
     weekly_notes = mem_mgr.get_context().get("weekly", [])
-    if any("carried from last week" in n.lower() for n in weekly_notes):
-        return {"rolled_over": False, "carried": True}
+    if any(
+        "carried from last week" in n.lower()
+        or f"cycle {current_prefix.lower()}" in n.lower()
+        for n in weekly_notes
+    ):
+        return {"rolled_over": False, "carried": any("carried from last week" in n.lower() for n in weekly_notes)}
 
     prev_rows = []
     with open(prev_path, "r", encoding="utf-8") as f:
@@ -589,8 +599,8 @@ def check_and_apply_week_rollover(
     prev_days = len(prev_dates) if prev_dates else 7
 
     daily_calories, daily_p, _, _ = _get_baseline_daily_targets(mem_mgr)
-    prev_cal = sum(float(r.get("Calories", 0) or 0) for r in prev_rows)
-    prev_p = sum(float(r.get("P", 0) or 0) for r in prev_rows)
+    prev_cal = sum(_safe_float(r.get("Calories", 0)) for r in prev_rows)
+    prev_p = sum(_safe_float(r.get("P", 0)) for r in prev_rows)
 
     net_cal = prev_cal - (daily_calories * prev_days)
     net_p = prev_p - (daily_p * prev_days)
@@ -599,7 +609,8 @@ def check_and_apply_week_rollover(
         net_cal=net_cal,
         net_p=net_p,
         daily_cal_target=daily_calories,
-        daily_p_target=daily_p
+        daily_p_target=daily_p,
+        cycle_prefix=current_prefix
     )
 
     return {
