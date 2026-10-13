@@ -129,6 +129,116 @@ class MemoryManager:
             except Exception:
                 pass
 
+    def record_daily_deviation(
+        self,
+        date: str,
+        planned_cal: float,
+        target_cal: float,
+        planned_p: float,
+        target_p: float,
+        cal_threshold: float = 0.15,
+        p_threshold: float = 0.10
+    ) -> dict:
+        """Records or updates an idempotent daily deviation note in weekly.md.
+        
+        A diff is substantial if it deviates >= cal_threshold (default 15%) of Calories
+        or >= p_threshold (default 10%) of Protein against daily target goals.
+        If deviating, updates or creates exactly one entry for date.
+        If within tolerance, clears any existing deviation entry for date.
+        """
+        cal_diff = int(round(planned_cal - target_cal))
+        p_diff = int(round(planned_p - target_p))
+
+        cal_pct = abs(planned_cal - target_cal) / target_cal if target_cal > 0 else 0.0
+        p_pct = abs(planned_p - target_p) / target_p if target_p > 0 else 0.0
+
+        is_deviating = (cal_pct >= cal_threshold) or (p_pct >= p_threshold)
+
+        existing = self._read_notes(self.weekly_path, os.path.join(self.memory_dir, "weekly.json"))
+        date_pattern = re.compile(rf"^\[?{re.escape(date)}\]?\s*Daily\s+deviation:", re.I)
+
+        note_content = (
+            f"[{date}] Daily deviation: {cal_diff:+d} kcal, {p_diff:+d}g P vs target "
+            f"({int(round(planned_cal))} kcal / {int(round(planned_p))}g P planned vs "
+            f"{int(round(target_cal))} kcal / {int(round(target_p))}g P target)"
+        )
+
+        found_idx = None
+        new_notes = []
+        for i, n in enumerate(existing):
+            if date_pattern.search(n):
+                found_idx = i
+            else:
+                new_notes.append(n)
+
+        if is_deviating:
+            if found_idx is not None:
+                existing[found_idx] = note_content
+                self._write_notes(self.weekly_path, existing)
+            else:
+                existing.append(note_content)
+                self._write_notes(self.weekly_path, existing)
+            return {
+                "status": "recorded",
+                "deviating": True,
+                "date": date,
+                "cal_diff": cal_diff,
+                "p_diff": p_diff,
+                "note": note_content
+            }
+        else:
+            if found_idx is not None:
+                self._write_notes(self.weekly_path, new_notes)
+            return {
+                "status": "cleared",
+                "deviating": False,
+                "date": date,
+                "cal_diff": cal_diff,
+                "p_diff": p_diff,
+                "note": None
+            }
+
+    def rollover_weekly_memory(
+        self,
+        net_cal: float = 0.0,
+        net_p: float = 0.0,
+        daily_cal_target: float = 2500.0,
+        daily_p_target: float = 150.0,
+        cal_threshold: float = 0.15,
+        p_threshold: float = 0.10
+    ) -> dict:
+        """Rolls over short-term memory to a new week, carrying substantial net diffs.
+        
+        Clears previous week's short-term memory, and if the net difference is
+        substantial (>= cal_threshold of daily calories or >= p_threshold of daily protein),
+        writes a carried forward note into the fresh weekly.md.
+        """
+        self.clear_weekly_memory()
+
+        cal_pct = abs(net_cal) / daily_cal_target if daily_cal_target > 0 else 0.0
+        p_pct = abs(net_p) / daily_p_target if daily_p_target > 0 else 0.0
+
+        is_substantial = (cal_pct >= cal_threshold) or (p_pct >= p_threshold)
+
+        if is_substantial:
+            c_int = int(round(net_cal))
+            p_int = int(round(net_p))
+            carried_note = f"[Carried from last week] Net weekly deviation: {c_int:+d} kcal, {p_int:+d}P carried forward."
+            self._write_notes(self.weekly_path, [carried_note])
+            return {
+                "carried": True,
+                "note": carried_note,
+                "net_cal": c_int,
+                "net_p": p_int
+            }
+
+        return {
+            "carried": False,
+            "note": None,
+            "net_cal": int(round(net_cal)),
+            "net_p": int(round(net_p))
+        }
+
     def hydrate(self, user_timezone: str = "Europe/Brussels") -> tuple[list[tuple[str, str, float]], float]:
         """Loads only relevant context files (preferences, current week meal plan, memory) from disk, benchmarking latency."""
         from meal_planner.tools.artifacts import get_current_cycle_prefix
