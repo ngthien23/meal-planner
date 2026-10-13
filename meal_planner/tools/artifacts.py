@@ -1,7 +1,7 @@
 import csv
 import os
 import re
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime, timedelta
 
 from meal_planner.tools.onboarding import resolve_timezone
@@ -14,7 +14,8 @@ __all__ = [
     "get_batch_cook_csv",
     "update_batch_cook_csv",
     "check_meal_plan_csv",
-    "get_current_cycle_prefix"
+    "get_current_cycle_prefix",
+    "check_and_apply_week_rollover"
 ]
 
 DAY_NAME_MAP = {
@@ -37,13 +38,13 @@ def get_current_cycle_prefix(
 
 def _resolve_plan_path(data_dir: str, filename_pattern: str, prefix: Optional[str] = None) -> str:
     """Finds or resolves the path to an active plan file."""
-    if prefix is None:
-        prefix = get_current_cycle_prefix("Europe/Brussels", week_start_day="Saturday")
-    
     plans_dir = os.path.join(data_dir, "plans")
     os.makedirs(plans_dir, exist_ok=True)
-    
-    # Try dated pattern first
+
+    if prefix is not None:
+        return os.path.join(plans_dir, f"{prefix}_{filename_pattern}")
+
+    prefix = get_current_cycle_prefix("Europe/Brussels", week_start_day="Saturday")
     dated_name = f"{prefix}_{filename_pattern}"
     dated_path = os.path.join(plans_dir, dated_name)
     if os.path.exists(dated_path):
@@ -118,6 +119,36 @@ def update_meal_plan_csv(
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames or fieldnames
             existing_rows = list(reader)
+    else:
+        root_path = os.path.join(data_dir, "meal_plan.csv")
+        if os.path.exists(root_path):
+            with open(root_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                fieldnames = reader.fieldnames or fieldnames
+                existing_rows = list(reader)
+
+    # Check if plan starting date has changed (a new plan is made)
+    existing_dates = {r.get("Date", "").strip() for r in existing_rows if r.get("Date") and r.get("Date").strip()}
+    new_dates = {str(item.get("Date", "")).strip() for item in updates if item.get("Date") and str(item.get("Date", "")).strip()}
+    if existing_dates and new_dates:
+        min_existing = min(existing_dates)
+        min_new = min(new_dates)
+        if min_new != min_existing:
+            from meal_planner.tools.memory import MemoryManager
+            mem_mgr = MemoryManager(data_dir)
+            daily_calories, daily_p, _, _ = _get_baseline_daily_targets(mem_mgr)
+            prev_cal = sum(float(r.get("Calories", 0) or 0) for r in existing_rows)
+            prev_p = sum(float(r.get("P", 0) or 0) for r in existing_rows)
+            prev_days = len(existing_dates)
+            net_cal = prev_cal - (daily_calories * prev_days)
+            net_p = prev_p - (daily_p * prev_days)
+            mem_mgr.rollover_weekly_memory(
+                net_cal=net_cal,
+                net_p=net_p,
+                daily_cal_target=daily_calories,
+                daily_p_target=daily_p
+            )
+            existing_rows = []
 
     # Index existing rows by (Date, Meal.lower())
     row_index = {}
@@ -456,6 +487,132 @@ def update_batch_cook_csv(
     }
 
 
+def _get_baseline_daily_targets(mem_mgr: Any) -> tuple[float, float, float, float]:
+    """Helper to extract daily calorie, protein, carb, and fat targets from memory."""
+    mem_ctx = mem_mgr.get_context()
+    long_term_notes = mem_ctx.get("long_term", [])
+
+    daily_calories = None
+    daily_p = None
+    daily_c = None
+    daily_f = None
+    bodyweight = None
+
+    for note in long_term_notes:
+        bw_m = re.search(r"(?:bodyweight|weight)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*kg", note, re.I)
+        if not bw_m:
+            bw_m = re.search(r"(\d+(?:\.\d+)?)\s*kg\b", note, re.I)
+        if bw_m and bodyweight is None:
+            bodyweight = float(bw_m.group(1))
+
+        cal_m = re.search(r"(?:target\s+calories|calories?)\s*[:=]?\s*(\d+(?:\.\d+)?)", note, re.I)
+        if not cal_m:
+            cal_m = re.search(r"(\d{3,4})\s*(?:kcal|calories)", note, re.I)
+        if cal_m and daily_calories is None:
+            daily_calories = float(cal_m.group(1))
+
+        p_m = re.search(r"(?:protein|target\s+protein)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
+        if not p_m:
+            p_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*protein", note, re.I)
+        if p_m and daily_p is None:
+            daily_p = float(p_m.group(1))
+
+        c_m = re.search(r"(?:carbs?|target\s+carbs?)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
+        if not c_m:
+            c_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*carbs?", note, re.I)
+        if c_m and daily_c is None:
+            daily_c = float(c_m.group(1))
+
+        f_m = re.search(r"(?:fat|target\s+fat)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
+        if not f_m:
+            f_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*fat", note, re.I)
+        if f_m and daily_f is None:
+            daily_f = float(f_m.group(1))
+
+    if daily_calories is None:
+        daily_calories = 2500.0
+    if daily_p is None:
+        daily_p = round(bodyweight * 2.2, 1) if bodyweight else 150.0
+    if daily_f is None:
+        daily_f = round(bodyweight * 0.9, 1) if bodyweight else round(daily_calories * 0.25 / 9.0, 1)
+    if daily_c is None:
+        daily_c = max(0.0, round((daily_calories - (daily_p * 4.0) - (daily_f * 9.0)) / 4.0, 1))
+
+    return daily_calories, daily_p, daily_c, daily_f
+
+
+def check_and_apply_week_rollover(
+    data_dir: str,
+    current_prefix: Optional[str] = None,
+    user_timezone: str = "Europe/Brussels"
+) -> dict:
+    """Checks if transitioning to a new week cycle and rolls over any substantial net diffs."""
+    from meal_planner.tools.memory import MemoryManager
+    if current_prefix is None:
+        current_prefix = get_current_cycle_prefix(user_timezone)
+
+    plans_dir = os.path.join(data_dir, "plans")
+    if not os.path.exists(plans_dir):
+        return {"rolled_over": False, "carried": False}
+
+    pattern = re.compile(r"^(\d{6})_meal_plan\.csv$")
+    candidates = []
+    for f in os.listdir(plans_dir):
+        m = pattern.match(f)
+        if m and m.group(1) < current_prefix:
+            candidates.append((m.group(1), os.path.join(plans_dir, f)))
+
+    if not candidates:
+        return {"rolled_over": False, "carried": False}
+
+    candidates.sort(key=lambda x: x[0])
+    prev_prefix, prev_path = candidates[-1]
+
+    curr_path = os.path.join(plans_dir, f"{current_prefix}_meal_plan.csv")
+    if os.path.exists(curr_path):
+        return {"rolled_over": False, "carried": False}
+
+    mem_mgr = MemoryManager(data_dir)
+    weekly_notes = mem_mgr.get_context().get("weekly", [])
+    if any("carried from last week" in n.lower() for n in weekly_notes):
+        return {"rolled_over": False, "carried": True}
+
+    prev_rows = []
+    with open(prev_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        prev_rows = list(reader)
+
+    if not prev_rows:
+        return {"rolled_over": False, "carried": False}
+
+    prev_dates = {r.get("Date", "").strip() for r in prev_rows if r.get("Date") and r.get("Date").strip()}
+    prev_days = len(prev_dates) if prev_dates else 7
+
+    daily_calories, daily_p, _, _ = _get_baseline_daily_targets(mem_mgr)
+    prev_cal = sum(float(r.get("Calories", 0) or 0) for r in prev_rows)
+    prev_p = sum(float(r.get("P", 0) or 0) for r in prev_rows)
+
+    net_cal = prev_cal - (daily_calories * prev_days)
+    net_p = prev_p - (daily_p * prev_days)
+
+    rollover_res = mem_mgr.rollover_weekly_memory(
+        net_cal=net_cal,
+        net_p=net_p,
+        daily_cal_target=daily_calories,
+        daily_p_target=daily_p
+    )
+
+    return {
+        "rolled_over": True,
+        "carried": rollover_res.get("carried", False),
+        "prev_prefix": prev_prefix,
+        "current_prefix": current_prefix,
+        "net_cal": rollover_res.get("net_cal"),
+        "net_p": rollover_res.get("net_p"),
+        "note": rollover_res.get("note")
+    }
+
+
 def check_meal_plan_csv(
     data_dir: str,
     target_weekly_calories: Optional[float] = None,
@@ -527,54 +684,9 @@ def check_meal_plan_csv(
     # Load memory context for targets and carried numbers
     mem_mgr = MemoryManager(data_dir)
     mem_ctx = mem_mgr.get_context()
-    long_term_notes = mem_ctx.get("long_term", [])
     weekly_notes = mem_ctx.get("weekly", [])
 
-    daily_calories = None
-    daily_p = None
-    daily_c = None
-    daily_f = None
-    bodyweight = None
-
-    for note in long_term_notes:
-        bw_m = re.search(r"(?:bodyweight|weight)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*kg", note, re.I)
-        if not bw_m:
-            bw_m = re.search(r"(\d+(?:\.\d+)?)\s*kg\b", note, re.I)
-        if bw_m and bodyweight is None:
-            bodyweight = float(bw_m.group(1))
-
-        cal_m = re.search(r"(?:target\s+calories|calories?)\s*[:=]?\s*(\d+(?:\.\d+)?)", note, re.I)
-        if not cal_m:
-            cal_m = re.search(r"(\d{3,4})\s*(?:kcal|calories)", note, re.I)
-        if cal_m and daily_calories is None:
-            daily_calories = float(cal_m.group(1))
-
-        p_m = re.search(r"(?:protein|target\s+protein)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
-        if not p_m:
-            p_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*protein", note, re.I)
-        if p_m and daily_p is None:
-            daily_p = float(p_m.group(1))
-
-        c_m = re.search(r"(?:carbs?|target\s+carbs?)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
-        if not c_m:
-            c_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*carbs?", note, re.I)
-        if c_m and daily_c is None:
-            daily_c = float(c_m.group(1))
-
-        f_m = re.search(r"(?:fat|target\s+fat)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*g", note, re.I)
-        if not f_m:
-            f_m = re.search(r"(\d+(?:\.\d+)?)\s*g\s*fat", note, re.I)
-        if f_m and daily_f is None:
-            daily_f = float(f_m.group(1))
-
-    if daily_calories is None:
-        daily_calories = 2500.0
-    if daily_p is None:
-        daily_p = round(bodyweight * 2.2, 1) if bodyweight else 150.0
-    if daily_f is None:
-        daily_f = round(bodyweight * 0.9, 1) if bodyweight else round(daily_calories * 0.25 / 9.0, 1)
-    if daily_c is None:
-        daily_c = max(0.0, round((daily_calories - (daily_p * 4.0) - (daily_f * 9.0)) / 4.0, 1))
+    daily_calories, daily_p, daily_c, daily_f = _get_baseline_daily_targets(mem_mgr)
 
     # Daily aggregation & Short-Term Memory deviation recording
     daily_totals = {}
@@ -649,6 +761,17 @@ def check_meal_plan_csv(
         if "daily deviation:" in n_lower:
             continue
         if not any(k in n_lower for k in ("carried", "deficit", "surplus", "last week", "missed", "to cut", "to eat", "rollover")):
+            continue
+
+        if "net weekly deviation:" in n_lower:
+            m_cal = re.search(r"([+-]?\d+(?:\.\d+)?)\s*(?:kcal|calories)", note, re.I)
+            if m_cal:
+                dev_val = float(m_cal.group(1))
+                carried_cals += -dev_val
+            m_p = re.search(r"([+-]?\d+(?:\.\d+)?)\s*(?:g\s*protein|g\s*p\b|p\b)", note, re.I)
+            if m_p:
+                dev_val = float(m_p.group(1))
+                carried_p += -dev_val
             continue
 
         is_cut = any(k in n_lower for k in ("cut", "surplus", "reduce", "over")) and not any(k in n_lower for k in ("deficit", "to eat"))

@@ -13,6 +13,7 @@ from meal_planner.tools.artifacts import (
     update_batch_cook_csv,
     check_meal_plan_csv,
     get_current_cycle_prefix,
+    check_and_apply_week_rollover,
     _run_sort_key,
 )
 
@@ -43,13 +44,15 @@ def build_system_instruction(
     now_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z")
     weekday_str = now_local.strftime("%A")
 
+    prefix = get_current_cycle_prefix(user_timezone, now_local, week_start_day="Saturday")
+    # Trigger automatic rollover if transitioning to a new week
+    check_and_apply_week_rollover(data_dir, current_prefix=prefix, user_timezone=user_timezone)
+
     # Load memory context
     mem_mgr = MemoryManager(data_dir)
     mem_ctx = mem_mgr.get_context()
     weekly_notes = "\n".join(f"  - [Weekly Note] {n}" for n in mem_ctx["weekly"]) or "  (None recorded for this week)"
     long_term_notes = "\n".join(f"  - [Durable Fact] {n}" for n in mem_ctx["long_term"]) or "  (None recorded yet)"
-
-    prefix = get_current_cycle_prefix(user_timezone, now_local, week_start_day="Saturday")
     plans_dir = os.path.join(data_dir, "plans")
     os.makedirs(plans_dir, exist_ok=True)
     active_plan_csv = os.path.join(plans_dir, f"{prefix}_meal_plan.csv")

@@ -239,5 +239,123 @@ class TestCheckMealPlanDailyDeviation(unittest.TestCase):
         self.assertEqual(len(notes), 0)
 
 
+class TestStartDateChangeAndWeekRollover(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.mgr = MemoryManager(self.test_dir)
+        self.mgr.add_note("Target calories: 2500 kcal", tier="long_term")
+        self.mgr.add_note("Target protein: 150g", tier="long_term")
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_update_meal_plan_start_date_change_substantial_rollover(self):
+        from meal_planner.tools.artifacts import update_meal_plan_csv, check_meal_plan_csv
+
+        # Plan 1: 2026-10-10 to 2026-10-16 (7 days).
+        # Daily: 2000 kcal (-500 kcal, -20%), 120g P (-30g, -20%).
+        # Weekly: planned 14000 kcal vs 17500 target (net -3500 kcal), 840g P vs 1050 target (net -210g P).
+        plan1 = []
+        for i in range(10, 17):
+            plan1.append({
+                "Date": f"2026-10-{i}",
+                "Meal": "Lunch",
+                "Recipe": "Chicken and Rice",
+                "Ingredient": "Chicken",
+                "P": 120,
+                "C": 200,
+                "F": 50,
+                "Calories": 2000,
+            })
+        update_meal_plan_csv(self.test_dir, plan1)
+
+        # Plan 2 starting next week: 2026-10-17 to 2026-10-23
+        plan2 = []
+        for i in range(17, 24):
+            plan2.append({
+                "Date": f"2026-10-{i}",
+                "Meal": "Lunch",
+                "Recipe": "Steak and Potatoes",
+                "Ingredient": "Steak",
+                "P": 150,
+                "C": 200,
+                "F": 50,
+                "Calories": 2500,
+            })
+        update_meal_plan_csv(self.test_dir, plan2)
+
+        # weekly.md must have the carried deviation note from plan 1
+        notes = self.mgr.get_context()["weekly"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("[Carried from last week] Net weekly deviation: -3500 kcal, -210P carried forward.", notes[0])
+
+        # check_meal_plan_csv on plan 2 must incorporate the carried deficit into the target
+        res = check_meal_plan_csv(self.test_dir)
+        # Base: 17500 kcal + 3500 carried = 21000 kcal target
+        self.assertEqual(res["target"]["calories"], 21000.0)
+        self.assertEqual(res["target"]["P"], 1260.0)
+
+    def test_update_meal_plan_start_date_change_not_substantial_no_rollover(self):
+        from meal_planner.tools.artifacts import update_meal_plan_csv
+
+        # Plan 1: 2026-10-10 to 2026-10-16.
+        # Planned: 2450 kcal (-50 kcal/day, -2% < 15%), 148g P (-2g/day, -1.3% < 10%).
+        plan1 = []
+        for i in range(10, 17):
+            plan1.append({
+                "Date": f"2026-10-{i}",
+                "Meal": "Lunch",
+                "Recipe": "Chicken and Rice",
+                "Ingredient": "Chicken",
+                "P": 148,
+                "C": 200,
+                "F": 50,
+                "Calories": 2450,
+            })
+        update_meal_plan_csv(self.test_dir, plan1)
+
+        # Plan 2 starting 2026-10-17
+        plan2 = [{
+            "Date": "2026-10-17",
+            "Meal": "Lunch",
+            "Recipe": "Fish",
+            "Ingredient": "Fish",
+            "P": 150,
+            "C": 200,
+            "F": 50,
+            "Calories": 2500,
+        }]
+        update_meal_plan_csv(self.test_dir, plan2)
+
+        # weekly.md should not carry non-substantial difference
+        notes = self.mgr.get_context()["weekly"]
+        self.assertEqual(len(notes), 0)
+
+    def test_check_and_apply_week_rollover_cycle_transition(self):
+        from meal_planner.tools.artifacts import update_meal_plan_csv, check_and_apply_week_rollover
+
+        # Save older cycle plan: 261010_meal_plan.csv with substantial deficit
+        plan_old = [{
+            "Date": "2026-10-10",
+            "Meal": "Lunch",
+            "Recipe": "Meal",
+            "Ingredient": "Food",
+            "P": 100,  # -50g P
+            "C": 100,
+            "F": 30,
+            "Calories": 1500,  # -1000 kcal
+        }]
+        update_meal_plan_csv(self.test_dir, plan_old, prefix="261010")
+
+        # Now trigger check_and_apply_week_rollover for new cycle 261017
+        res = check_and_apply_week_rollover(self.test_dir, current_prefix="261017")
+        self.assertTrue(res["rolled_over"])
+        self.assertTrue(res["carried"])
+
+        notes = self.mgr.get_context()["weekly"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("[Carried from last week] Net weekly deviation: -1000 kcal, -50P carried forward.", notes[0])
+
+
 if __name__ == "__main__":
     unittest.main()
