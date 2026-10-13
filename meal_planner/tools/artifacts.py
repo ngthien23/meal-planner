@@ -491,7 +491,8 @@ def check_meal_plan_csv(
             "message": "[NEEDS FIXING] No meal plan found in meal_plan.csv. Please generate and save a meal plan using tool_update_plans first.",
             "planned": {"calories": 0.0, "P": 0.0, "C": 0.0, "F": 0.0},
             "target": {"calories": 0.0, "P": 0.0, "C": 0.0, "F": 0.0},
-            "discrepancies": ["No meals planned."]
+            "discrepancies": ["No meals planned."],
+            "daily_deviations": []
         }
 
     planned_calories = 0.0
@@ -575,6 +576,68 @@ def check_meal_plan_csv(
     if daily_c is None:
         daily_c = max(0.0, round((daily_calories - (daily_p * 4.0) - (daily_f * 9.0)) / 4.0, 1))
 
+    # Daily aggregation & Short-Term Memory deviation recording
+    daily_totals = {}
+    for r in rows:
+        d = str(r.get("Date", "")).strip()
+        if not d:
+            continue
+        if d not in daily_totals:
+            daily_totals[d] = {"calories": 0.0, "p": 0.0, "c": 0.0, "f": 0.0}
+        try:
+            daily_totals[d]["calories"] += float(r.get("Calories", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+        try:
+            daily_totals[d]["p"] += float(r.get("P", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+        try:
+            daily_totals[d]["c"] += float(r.get("C", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+        try:
+            daily_totals[d]["f"] += float(r.get("F", 0) or 0)
+        except (ValueError, TypeError):
+            pass
+
+    daily_deviations = []
+    for d in sorted(daily_totals.keys()):
+        totals = daily_totals[d]
+        dev_res = mem_mgr.record_daily_deviation(
+            date=d,
+            planned_cal=totals["calories"],
+            target_cal=daily_calories,
+            planned_p=totals["p"],
+            target_p=daily_p,
+            cal_threshold=0.15,
+            p_threshold=0.10
+        )
+        if dev_res.get("deviating"):
+            daily_deviations.append({
+                "date": d,
+                "planned_cal": totals["calories"],
+                "target_cal": daily_calories,
+                "cal_diff": dev_res.get("cal_diff"),
+                "planned_p": totals["p"],
+                "target_p": daily_p,
+                "p_diff": dev_res.get("p_diff"),
+                "note": dev_res.get("note")
+            })
+
+    # Prune any deviation notes in weekly.md for dates not in the active plan
+    curr_weekly = mem_mgr.get_context().get("weekly", [])
+    pruned_notes = []
+    changed_weekly = False
+    for n in curr_weekly:
+        m = re.match(r"^\[?(\d{4}-\d{2}-\d{2})\]?\s*Daily\s+deviation:", n, re.I)
+        if m and m.group(1) not in daily_totals:
+            changed_weekly = True
+        else:
+            pruned_notes.append(n)
+    if changed_weekly:
+        mem_mgr._write_notes(mem_mgr.weekly_path, pruned_notes)
+
     # Parse carried adjustments from weekly notes
     carried_cals = 0.0
     carried_p = 0.0
@@ -583,6 +646,8 @@ def check_meal_plan_csv(
 
     for note in weekly_notes:
         n_lower = note.lower()
+        if "daily deviation:" in n_lower:
+            continue
         if not any(k in n_lower for k in ("carried", "deficit", "surplus", "last week", "missed", "to cut", "to eat", "rollover")):
             continue
 
@@ -697,12 +762,22 @@ def check_meal_plan_csv(
             parts.append(f"{int(carried_f):+d}F")
         carried_str = f"  (Base: {int(daily_calories * num_days)} kcal, Carried adjustment from last week: {', '.join(parts)})\n"
 
+    dev_str = ""
+    if daily_deviations:
+        dev_lines = [
+            f"  - [{d['date']}] {d['cal_diff']:+d} kcal, {d['p_diff']:+d}g P vs target "
+            f"({int(d['planned_cal'])} kcal / {int(d['planned_p'])}g P planned)"
+            for d in daily_deviations
+        ]
+        dev_str = "Daily intake deviations recorded in Short-Term Memory:\n" + "\n".join(dev_lines) + "\n\n"
+
     if not discrepancies:
         msg = (
             f"[ACCEPTED] Weekly meal plan matches nutritional goals within acceptable approximation!\n"
             f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}P | {int(planned_c)}C | {int(planned_f)}F\n"
             f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}P | {int(target_c)}C | {int(target_f)}F\n"
             f"{carried_str}"
+            f"{dev_str}"
             f"Everything checked. The meal plan is approved. Validation is complete (do NOT call tool_check_meal_plan or tool_get_meal_plan again)."
         )
         return {
@@ -711,7 +786,8 @@ def check_meal_plan_csv(
             "message": msg,
             "planned": {"calories": planned_calories, "P": planned_p, "C": planned_c, "F": planned_f},
             "target": {"calories": target_cals, "P": target_p, "C": target_c, "F": target_f},
-            "discrepancies": []
+            "discrepancies": [],
+            "daily_deviations": daily_deviations
         }
     else:
         issues_str = "\n".join(f"- {d}" for d in discrepancies)
@@ -721,7 +797,8 @@ def check_meal_plan_csv(
             f"Summary:\n"
             f"- Planned Weekly: {int(planned_calories)} kcal | {int(planned_p)}P | {int(planned_c)}C | {int(planned_f)}F\n"
             f"- Target Weekly: {int(target_cals)} kcal | {int(target_p)}P | {int(target_c)}C | {int(target_f)}F\n"
-            f"{carried_str}\n"
+            f"{carried_str}"
+            f"{dev_str}"
             f"Request: Please adjust the meal plan using tool_update_plans to fix these discrepancies, then re-check with tool_check_meal_plan."
         )
         return {
@@ -730,6 +807,7 @@ def check_meal_plan_csv(
             "message": msg,
             "planned": {"calories": planned_calories, "P": planned_p, "C": planned_c, "F": planned_f},
             "target": {"calories": target_cals, "P": target_p, "C": target_c, "F": target_f},
-            "discrepancies": discrepancies
+            "discrepancies": discrepancies,
+            "daily_deviations": daily_deviations
         }
 

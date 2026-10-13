@@ -150,5 +150,94 @@ class TestMemoryDailyDeviationAndRollover(unittest.TestCase):
         self.assertEqual(len(notes), 0, "Non-substantial deviation should not be carried forward")
 
 
+class TestCheckMealPlanDailyDeviation(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp()
+        self.mgr = MemoryManager(self.test_dir)
+        # Add athlete profile in long-term memory: 2500 kcal, 150g protein
+        self.mgr.add_note("Target calories: 2500 kcal", tier="long_term")
+        self.mgr.add_note("Target protein: 150g", tier="long_term")
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def _create_sample_plan(self, dates_and_totals: list[dict]):
+        from meal_planner.tools.artifacts import update_meal_plan_csv
+        updates = []
+        for d in dates_and_totals:
+            dt = d["Date"]
+            cal = d.get("Calories", 2500)
+            p = d.get("P", 150)
+            updates.append({
+                "Date": dt,
+                "Meal": "Lunch",
+                "Recipe": "Chicken and Rice",
+                "Ingredient": "Chicken",
+                "P": p,
+                "C": 200,
+                "F": 50,
+                "Calories": cal,
+            })
+        update_meal_plan_csv(self.test_dir, updates)
+
+    def test_check_meal_plan_records_daily_deviation_and_idempotent(self):
+        from meal_planner.tools.artifacts import check_meal_plan_csv
+        # 3-day plan: day 1 has -1000 kcal deficit (-40%) and -60g P deficit (-40%)
+        days = [
+            {"Date": "2026-10-10", "Calories": 1500, "P": 90},
+            {"Date": "2026-10-11", "Calories": 2500, "P": 150},
+            {"Date": "2026-10-12", "Calories": 2500, "P": 150},
+        ]
+        self._create_sample_plan(days)
+
+        # Run check
+        res = check_meal_plan_csv(self.test_dir)
+        self.assertIn("daily_deviations", res)
+        self.assertEqual(len(res["daily_deviations"]), 1)
+        self.assertEqual(res["daily_deviations"][0]["date"], "2026-10-10")
+
+        # Check weekly.md has exactly 1 note for 2026-10-10
+        notes = self.mgr.get_context()["weekly"]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("[2026-10-10] Daily deviation:", notes[0])
+        self.assertIn("-1000 kcal", notes[0])
+        self.assertIn("-60g P", notes[0])
+
+        # Run check AGAIN (idempotency check)
+        check_meal_plan_csv(self.test_dir)
+        notes_again = self.mgr.get_context()["weekly"]
+        self.assertEqual(len(notes_again), 1, "Idempotence failed: duplicate lines created")
+
+        # Now fix the deviating day
+        days[0] = {"Date": "2026-10-10", "Calories": 2480, "P": 152}
+        self._create_sample_plan(days)
+        res_fixed = check_meal_plan_csv(self.test_dir)
+        self.assertEqual(len(res_fixed["daily_deviations"]), 0)
+
+        # Deviation note must be cleared from weekly.md
+        notes_cleared = self.mgr.get_context()["weekly"]
+        self.assertEqual(len(notes_cleared), 0, "Obsolete deviation note was not removed")
+
+    def test_check_meal_plan_clears_notes_for_removed_dates(self):
+        from meal_planner.tools.artifacts import check_meal_plan_csv, update_meal_plan_csv
+        # Plan for 2026-10-10 that deviates
+        self._create_sample_plan([{"Date": "2026-10-10", "Calories": 1500, "P": 90}])
+        check_meal_plan_csv(self.test_dir)
+        self.assertEqual(len(self.mgr.get_context()["weekly"]), 1)
+
+        # Now replace plan with different dates completely (e.g. 2026-10-15 only)
+        import os, shutil
+        shutil.rmtree(os.path.join(self.test_dir, "plans"), ignore_errors=True)
+        root_csv = os.path.join(self.test_dir, "meal_plan.csv")
+        if os.path.exists(root_csv):
+            os.remove(root_csv)
+        self._create_sample_plan([{"Date": "2026-10-15", "Calories": 2500, "P": 150}])
+        check_meal_plan_csv(self.test_dir)
+
+        # The 2026-10-10 note should be pruned since 2026-10-10 is no longer in the plan
+        notes = self.mgr.get_context()["weekly"]
+        self.assertEqual(len(notes), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
